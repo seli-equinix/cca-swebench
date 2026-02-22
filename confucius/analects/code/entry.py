@@ -20,6 +20,8 @@ from ...orchestrator.extensions.function import FunctionExtension
 from ...orchestrator.extensions.memory.hierarchical import HierarchicalMemoryExtension
 from ...orchestrator.extensions.plain_text import PlainTextExtension
 from ...orchestrator.extensions.plan.llm import LLMCodingArchitectExtension
+from ...orchestrator.extensions.expert.reviewer import CodeReviewerExtension
+from ...orchestrator.extensions.expert.test_gen import TestGeneratorExtension
 from ...orchestrator.extensions.solo import SoloModeExtension
 from ...orchestrator.types import OrchestratorInput
 from .commands import get_allowed_commands
@@ -62,7 +64,7 @@ class CodeAssistEntry(Analect[EntryInput, EntryOutput], EntryAnalectMixin):
 
         # Prepare extensions per spec
         extensions: list[Extension] = [
-            LLMCodingArchitectExtension(),  # planning
+            LLMCodingArchitectExtension(),  # planning (config-aware via config_role="planner")
             FileEditExtension(
                 max_output_lines=500,
                 enable_tool_use=True,
@@ -74,6 +76,8 @@ class CodeAssistEntry(Analect[EntryInput, EntryOutput], EntryAnalectMixin):
                 enable_tool_use=True,
             ),
             FunctionExtension(functions=get_functions(), enable_tool_use=True),
+            CodeReviewerExtension(),    # auto-disabled if "reviewer" not in config
+            TestGeneratorExtension(),   # auto-disabled if "tester" not in config
             PlainTextExtension(),
             HierarchicalMemoryExtension(),
             AnthropicPromptCaching(),

@@ -160,14 +160,35 @@ class AnthropicLLMOrchestrator(LLMOrchestrator):
         self, context: AnalectRunContext
     ) -> None:
         """
-        Callback after processing the tool use queue is complete. Default behavior is sequentially call each extension's on_process_messages_complete.
+        Callback after processing the tool use queue is complete.
+
+        Extensions with parallel_safe=True (expert extensions) run concurrently
+        via asyncio.gather(). All other extensions run sequentially first to
+        preserve existing behavior.
 
         Args:
             context (AnalectRunContext): The context of the collector.
 
         Raise an OrchestratorInterruption to prompt the orchestrator to continue
         """
-        await super().on_process_messages_complete(context)
+        sequential_exts = [
+            e for e in self.extensions
+            if not getattr(e, "parallel_safe", False)
+        ]
+        parallel_exts = [
+            e for e in self.extensions
+            if getattr(e, "parallel_safe", False)
+        ]
+
+        # Sequential extensions first (existing behavior preserved)
+        for ext in sequential_exts:
+            await ext.on_process_messages_complete(context)
+
+        # Parallel-safe extensions concurrently (expert LLM calls)
+        if parallel_exts:
+            await asyncio.gather(
+                *(ext.on_process_messages_complete(context) for ext in parallel_exts)
+            )
 
     async def _process_response(
         self, msg: BaseMessage, context: AnalectRunContext

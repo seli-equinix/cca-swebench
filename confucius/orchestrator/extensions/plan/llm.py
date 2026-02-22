@@ -12,6 +12,7 @@ from pydantic import Field, model_validator, PrivateAttr
 from ....core import types as cf
 
 from ....core.analect import AnalectRunContext
+from ....core.config import CCAConfigError, get_llm_params
 from ....core.llm_manager import LLMParams
 from ....core.memory import CfMemory, CfMessage
 from ..token.estimator import TokenEstimatorExtension
@@ -31,6 +32,11 @@ __FILTER_STATUS_KEY__ = "filter_status"
 class LLMPlannerExtension(TokenEstimatorExtension):
     name: str = "llm_planner"
     included_in_system_prompt: bool = False
+    config_role: str | None = Field(
+        default=None,
+        description="If set, load llm_params from config.toml for this role. "
+        "Falls back to hardcoded default if role is missing from config.",
+    )
     llm_params: LLMParams = Field(
         default=LLMParams(
             model="gpt-5.2",
@@ -85,6 +91,19 @@ class LLMPlannerExtension(TokenEstimatorExtension):
             raise ValueError(
                 f"max_prompt_length {self.max_prompt_length} must be greater than or equal to min_prompt_length {self.min_prompt_length}"
             )
+        return self
+
+    @model_validator(mode="after")
+    def _load_config_role(self) -> "LLMPlannerExtension":  # noqa: B902
+        """If config_role is set, try to load llm_params from config.toml.
+
+        On CCAConfigError, keep the hardcoded default — backwards-compatible.
+        """
+        if self.config_role is not None:
+            try:
+                self.llm_params = get_llm_params(self.config_role)
+            except CCAConfigError:
+                pass  # Keep hardcoded default
         return self
 
     class Config:
@@ -247,6 +266,7 @@ class LLMPlannerExtension(TokenEstimatorExtension):
 
 
 class LLMCodingArchitectExtension(LLMPlannerExtension):
+    config_role: str | None = "planner"
     prompt: ChatPromptTemplate = Field(
         default=LLM_CODING_ARCHITECT_PROMPT,
         description="The messages to be sent to the LLM. This can be a list of strings or a list of CfMessage objects.",

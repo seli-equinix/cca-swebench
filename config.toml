@@ -9,10 +9,34 @@ openai_model_prefixes = ["qwen", "/models/"]
 [active]
 coder = "local"           # "cloud" = Azure GPT-5.2, "local" = Spark2 Qwen3-80B
 note_taker = "local"      # "cloud" = Bedrock Claude Sonnet, "local" = Spark1 Qwen3-8B
+planner = "local"         # optional — comment out to use hardcoded default
+reviewer = "local"        # optional — comment out to disable code review expert
+tester = "local"          # optional — comment out to disable test generator expert
 
 # ──────────────────────────────────────────────
 # CLOUD PROVIDERS (original upstream defaults)
 # ──────────────────────────────────────────────
+
+[providers.cloud.planner]
+model = "gpt-5.2"
+provider = "azure"
+initial_max_tokens = 4096
+temperature = 0.2
+thinking_budget = 16384
+
+[providers.cloud.reviewer]
+model = "gpt-5.2"
+provider = "azure"
+initial_max_tokens = 4096
+temperature = 0.1
+thinking_budget = 8192
+
+[providers.cloud.tester]
+model = "gpt-5.2"
+provider = "azure"
+initial_max_tokens = 4096
+temperature = 0.3
+thinking_budget = 8192
 
 [providers.cloud.coder]
 model = "gpt-5.2"
@@ -59,3 +83,24 @@ temperature = 0.3
 top_p = 0.9
 cost_per_1m_input = 0.0
 cost_per_1m_output = 0.0
+
+[providers.local.planner]
+model = "/models/Qwen3-Next-80B-A3B-Thinking-FP8"
+provider = "openai"
+base_url = "http://192.168.4.208:8000/v1"
+initial_max_tokens = 4096
+temperature = 0.2
+
+[providers.local.reviewer]
+model = "/models/Qwen3-Next-80B-A3B-Thinking-FP8"
+provider = "openai"
+base_url = "http://192.168.4.208:8000/v1"
+initial_max_tokens = 4096
+temperature = 0.1
+
+[providers.local.tester]
+model = "/models/Qwen3-Next-80B-A3B-Thinking-FP8"
+provider = "openai"
+base_url = "http://192.168.4.208:8000/v1"
+initial_max_tokens = 4096
+temperature = 0.3
