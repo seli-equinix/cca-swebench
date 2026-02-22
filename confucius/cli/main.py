@@ -60,6 +60,23 @@ def code_cmd(verbose: bool) -> None:
     asyncio.run(_run_repl("Code", verbose=verbose))
 
 
+@main.command("serve")
+@click.option("--host", default="0.0.0.0", help="Bind address")
+@click.option("--port", default=8100, type=int, help="Port to listen on")
+@click.option("--workers", default=1, type=int, help="Number of uvicorn workers")
+def serve_cmd(host: str, port: int, workers: int) -> None:
+    """
+    Start CCA as an OpenAI-compatible HTTP server.
+
+    Usage: confucius serve --port 8100
+    """
+    import uvicorn
+
+    from confucius.server.app import app
+
+    uvicorn.run(app, host=host, port=port, workers=workers)
+
+
 if __name__ == "__main__":
     # Allow running via `python -m confucius.cli.main` or directly as a script
     main()

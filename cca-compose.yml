@@ -89,6 +89,32 @@ services:
       - cca-sessions:/home/cca/.confucius
       - ./config.toml:/etc/cca/config.toml:ro
 
+  # CCA HTTP server (Agent-as-a-Model Endpoint)
+  cca-http:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: cca:latest
+    container_name: cca-http
+    env_file:
+      - .env
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-dummy}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-http://192.168.4.208:8000/v1}
+      - CCA_CONFIG_PATH=/etc/cca/config.toml
+      # User-awareness infrastructure (shared with MCP server)
+      - REDIS_URL=redis://:Loveme-sex64@192.168.4.205:6379/0
+      - QDRANT_URL=http://192.168.4.205:6333
+      - EMBEDDING_URL=http://192.168.4.205:8200
+    network_mode: host
+    entrypoint: ["confucius", "serve", "--port", "8100"]
+    volumes:
+      - ${CCA_WORKSPACE:-/home/seli/code}:/workspace:rw
+      - cca-sessions:/home/cca/.confucius
+      - ./config.toml:/etc/cca/config.toml:ro
+    working_dir: /workspace
+    restart: unless-stopped
+
 volumes:
   cca-sessions:
     driver: local
