@@ -79,7 +79,7 @@ class ChatMessage(BaseModel):
 class ChatCompletionRequest(BaseModel):
     """Full OpenAI-compatible chat completion request."""
 
-    model: str = Field(default="cca-agent", description="Model to use")
+    model: Optional[str] = Field(default=None, description="Model to use (any name accepted)")
     messages: List[ChatMessage] = Field(..., description="Conversation messages")
 
     # Generation parameters
@@ -265,7 +265,7 @@ def generate_completion_id() -> str:
 
 def build_completion_response(
     content: str,
-    model: str = "cca-agent",
+    model: str = "cca",
     finish_reason: str = "stop",
     reasoning: Optional[str] = None,
     metadata: Optional[ContextMetadata] = None,

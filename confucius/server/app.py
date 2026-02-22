@@ -32,6 +32,7 @@ from fastapi import FastAPI, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from ..core.config import get_llm_params
 from ..core.entry.base import EntryInput
 from ..lib.confucius import Confucius
 from .http_entry import HttpCodeAssistEntry
@@ -56,6 +57,28 @@ from .user.user_context import (
 )
 
 logger = logging.getLogger(__name__)
+
+# ==================== Model Name Resolution ====================
+
+
+def _resolve_served_model_name() -> str:
+    """Read the actual model name from CCA config (coder role).
+
+    Returns the underlying LLM model name so clients like Open WebUI
+    and Continue.dev see a recognizable model in their dropdown.
+    Falls back to 'cca-agent' if config is unavailable.
+    """
+    try:
+        params = get_llm_params("coder")
+        if params.model:
+            return params.model
+    except Exception as e:
+        logger.warning(f"Could not resolve model name from config: {e}")
+    return "cca-agent"
+
+
+# The model name advertised via /v1/models — resolved once at import time
+SERVED_MODEL_NAME: str = _resolve_served_model_name()
 
 # ==================== Globals (initialised in lifespan) ====================
 
@@ -86,7 +109,7 @@ async def lifespan(app: FastAPI):  # type: ignore[type-arg]
     # Start background cleanup task
     cleanup_task = asyncio.create_task(_cleanup_loop())
 
-    logger.info("CCA HTTP server ready")
+    logger.info(f"CCA HTTP server ready — serving as model: {SERVED_MODEL_NAME}")
     yield
 
     # Shutdown
@@ -338,7 +361,7 @@ async def chat_completions(
 
             response = build_completion_response(
                 content=response_text,
-                model=request.model or "cca-agent",
+                model=request.model or SERVED_MODEL_NAME,
                 reasoning=thinking_text if thinking_text else None,
                 metadata=metadata,
             )
@@ -355,26 +378,23 @@ async def chat_completions(
 
 @app.get("/v1/models")
 async def list_models() -> Dict[str, Any]:
-    """List available models (OpenAI-compatible)."""
+    """List available models (OpenAI-compatible).
+
+    Advertises the underlying LLM model name so clients like Open WebUI
+    and Continue.dev show a recognizable model in their dropdown.
+    Any model name is accepted in /v1/chat/completions — CCA is a single
+    agent, not a model router.
+    """
     return {
         "object": "list",
         "data": [
             {
-                "id": "cca-agent",
+                "id": SERVED_MODEL_NAME,
                 "object": "model",
                 "created": 1700000000,
                 "owned_by": "cca",
                 "permission": [],
-                "root": "cca-agent",
-                "parent": None,
-            },
-            {
-                "id": "cca",
-                "object": "model",
-                "created": 1700000000,
-                "owned_by": "cca",
-                "permission": [],
-                "root": "cca",
+                "root": SERVED_MODEL_NAME,
                 "parent": None,
             },
         ],
