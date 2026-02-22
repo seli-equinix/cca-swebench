@@ -28,7 +28,13 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from .llm_manager.llm_params import LLMParams
+# NOTE: LLMParams is NOT imported at module level to avoid circular imports.
+# config.py -> llm_manager.llm_params -> __init__ -> auto -> azure -> constants -> config.py
+# Instead, LLMParams is imported lazily inside functions that need it.
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .llm_manager.llm_params import LLMParams
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -57,6 +63,7 @@ class ProviderProfile(BaseModel):
     def to_llm_params(self) -> LLMParams:
         """Convert to CCA's internal LLMParams format."""
         from .chat_models.bedrock.api.invoke_model import anthropic as ant
+        from .llm_manager.llm_params import LLMParams as _LLMParams
 
         additional_kwargs: dict[str, Any] = {}
 
@@ -72,7 +79,7 @@ class ProviderProfile(BaseModel):
                 budget_tokens=self.thinking_budget,
             ).dict()
 
-        return LLMParams(
+        return _LLMParams(
             model=self.model,
             initial_max_tokens=self.initial_max_tokens,
             max_tokens=self.max_tokens,
