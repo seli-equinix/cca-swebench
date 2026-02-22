@@ -2,12 +2,13 @@
 # Switch between "cloud" and "local" provider sets per role.
 # Edit [active] section to toggle — no code changes needed.
 
+# Models matching these prefixes route through OpenAILLMManager
+# (top-level key — must be before any [section] headers)
+openai_model_prefixes = ["qwen", "/models/"]
+
 [active]
 coder = "local"           # "cloud" = Azure GPT-5.2, "local" = Spark2 Qwen3-80B
 note_taker = "local"      # "cloud" = Bedrock Claude Sonnet, "local" = Spark1 Qwen3-8B
-
-# Models matching these prefixes route through OpenAILLMManager
-openai_model_prefixes = ["qwen", "/models/"]
 
 # ──────────────────────────────────────────────
 # CLOUD PROVIDERS (original upstream defaults)
