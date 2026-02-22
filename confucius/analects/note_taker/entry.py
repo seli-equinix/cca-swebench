@@ -2,20 +2,12 @@
 # pyre-strict
 from __future__ import annotations
 
-from datetime import datetime
-
-from pathlib import Path
-from typing import Any, Callable
-
 from ...core import types as cf
 from ...core.analect import Analect, AnalectRunContext
 from ...core.config import get_llm_params
-
-from ...core.chat_models.bedrock.api.invoke_model import anthropic as ant
 from ...core.entry.base import EntryInput, EntryOutput
 from ...core.entry.decorators import public
 from ...core.entry.mixin import EntryAnalectMixin
-from ...core.llm_manager.llm_params import LLMParams
 from ...core.memory import CfMessage
 from ...orchestrator.anthropic import AnthropicLLMOrchestrator
 from ...orchestrator.extensions import Extension
@@ -25,7 +17,6 @@ from ...orchestrator.extensions.memory.hierarchical import HierarchicalMemoryExt
 from ...orchestrator.extensions.plain_text import PlainTextExtension
 from ...orchestrator.extensions.plan.llm import LLMCodingArchitectExtension
 from ...orchestrator.types import OrchestratorInput
-from ..code.llm_params import QWEN3_8B_NOTETAKER
 from .commands import get_allowed_commands
 from .tasks import NOTE_TAKER_PROMPT
 
@@ -75,7 +66,7 @@ class CCANoteTakerEntry(Analect[EntryInput, EntryOutput], EntryAnalectMixin):
 
         orchestrator = AnthropicLLMOrchestrator(
             llm_params=[
-                get_llm_params("note_taker", default=QWEN3_8B_NOTETAKER),
+                get_llm_params("note_taker"),
             ],
             extensions=extensions,
             raw_output_parser=None,

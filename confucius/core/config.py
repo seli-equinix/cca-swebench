@@ -3,7 +3,8 @@
 """CCA Configuration loader.
 
 Reads ~/.confucius/config.toml (or CCA_CONFIG_PATH env var).
-Falls back to hardcoded defaults when no config file exists.
+Raises CCAConfigError if config is missing or incomplete — never silently
+falls back. All errors are structured for UI consumption.
 
 Config format (TOML):
     [active]
@@ -40,6 +41,56 @@ logger: logging.Logger = logging.getLogger(__name__)
 
 _DEFAULT_CONFIG_PATH = Path.home() / ".confucius" / "config.toml"
 
+
+# ---------------------------------------------------------------------------
+# Structured error — UI-consumable
+# ---------------------------------------------------------------------------
+
+class CCAConfigError(Exception):
+    """Raised when CCA configuration is missing, invalid, or incomplete.
+
+    Every field is designed for UI consumption:
+        role        — which LLM role failed (e.g. "coder", "note_taker")
+        detail      — human-readable explanation of what went wrong
+        config_path — the config file path that was loaded (or expected)
+        suggestion  — actionable fix the UI can display to the user
+
+    Standard usage in CCA entry classes:
+        try:
+            params = get_llm_params("coder")
+        except CCAConfigError as e:
+            # e.role, e.detail, e.config_path, e.suggestion all available
+            show_config_error(e)
+    """
+
+    def __init__(
+        self,
+        *,
+        role: str,
+        detail: str,
+        config_path: str | None = None,
+        suggestion: str | None = None,
+    ) -> None:
+        self.role = role
+        self.detail = detail
+        self.config_path = config_path
+        self.suggestion = suggestion
+        super().__init__(f"[{role}] {detail}")
+
+    def to_dict(self) -> dict[str, str | None]:
+        """Serialize for JSON API / UI transport."""
+        return {
+            "error": "config_error",
+            "role": self.role,
+            "detail": self.detail,
+            "config_path": self.config_path,
+            "suggestion": self.suggestion,
+        }
+
+
+# ---------------------------------------------------------------------------
+# Pydantic models
+# ---------------------------------------------------------------------------
 
 class ProviderProfile(BaseModel):
     """A single LLM provider profile."""
@@ -111,54 +162,102 @@ class CCAConfig(BaseModel):
 
 # Module-level singleton
 _config: CCAConfig | None = None
+_config_path: str | None = None  # Track which path was loaded (for error messages)
+
+
+def _resolve_config_path() -> Path:
+    """Resolve the config file path from env or default."""
+    return Path(os.environ.get("CCA_CONFIG_PATH", str(_DEFAULT_CONFIG_PATH)))
 
 
 def _load_config() -> CCAConfig:
-    """Load config from TOML file. Returns empty config if no file exists."""
-    global _config
+    """Load config from TOML file. Raises CCAConfigError on failure."""
+    global _config, _config_path
     if _config is not None:
         return _config
 
-    config_path = Path(os.environ.get("CCA_CONFIG_PATH", str(_DEFAULT_CONFIG_PATH)))
-    if config_path.exists():
-        try:
-            with open(config_path, "rb") as f:
-                raw = tomllib.load(f)
-            _config = CCAConfig(**raw)
-            logger.info(f"Loaded CCA config from {config_path}")
-        except Exception as e:
-            logger.warning(f"Failed to load CCA config from {config_path}: {e}")
-            _config = CCAConfig()
-    else:
-        logger.debug(f"No CCA config at {config_path}, using defaults")
-        _config = CCAConfig()
+    config_path = _resolve_config_path()
+    _config_path = str(config_path)
+
+    if not config_path.exists():
+        raise CCAConfigError(
+            role="*",
+            detail=f"Config file not found: {config_path}",
+            config_path=str(config_path),
+            suggestion=(
+                f"Create {config_path} with [active] and [providers] sections. "
+                "Set CCA_CONFIG_PATH env var to use a different location."
+            ),
+        )
+
+    try:
+        with open(config_path, "rb") as f:
+            raw = tomllib.load(f)
+        _config = CCAConfig(**raw)
+        logger.info(f"Loaded CCA config from {config_path}")
+    except CCAConfigError:
+        raise
+    except Exception as e:
+        raise CCAConfigError(
+            role="*",
+            detail=f"Failed to parse config: {e}",
+            config_path=str(config_path),
+            suggestion="Check TOML syntax. Validate with: python -c \"import tomllib; tomllib.load(open('config.toml','rb'))\"",
+        ) from e
+
     return _config
 
 
 def reload_config() -> CCAConfig:
     """Force reload config from disk (for hot-reload / UI updates)."""
-    global _config
+    global _config, _config_path
     _config = None
+    _config_path = None
     return _load_config()
 
 
-def get_llm_params(role: str, default: LLMParams) -> LLMParams:
-    """Get LLMParams for a named role from config, falling back to default.
+def get_llm_params(role: str) -> LLMParams:
+    """Get LLMParams for a named role from config.
+
+    Raises CCAConfigError if the role is not configured. No silent fallbacks.
 
     Usage in entry classes:
-        from ...core.config import get_llm_params
-        from ..code.llm_params import QWEN3_8B_NOTETAKER
+        from ...core.config import get_llm_params, CCAConfigError
 
-        llm_params = get_llm_params("note_taker", default=QWEN3_8B_NOTETAKER)
+        params = get_llm_params("coder")
     """
     config = _load_config()
-    profile = config.get_profile(role)
+    config_path = _config_path or str(_resolve_config_path())
+
+    # Check [active] section has this role
+    provider_set = config.active.get(role)
+    if not provider_set:
+        available = list(config.active.keys()) or ["(none)"]
+        raise CCAConfigError(
+            role=role,
+            detail=f"Role '{role}' not found in [active] section",
+            config_path=config_path,
+            suggestion=f"Add '{role} = \"local\"' to the [active] section. Configured roles: {', '.join(available)}",
+        )
+
+    # Check the provider set has a profile for this role
+    profile = config.providers.get(provider_set, {}).get(role)
     if profile is None:
-        return default
+        available_sets = list(config.providers.keys()) or ["(none)"]
+        raise CCAConfigError(
+            role=role,
+            detail=f"No profile for role '{role}' in provider set '{provider_set}'",
+            config_path=config_path,
+            suggestion=f"Add [providers.{provider_set}.{role}] section with at least 'model' key. Available provider sets: {', '.join(available_sets)}",
+        )
+
     return profile.to_llm_params()
 
 
-def get_openai_model_prefixes(default: list[str]) -> list[str]:
-    """Get OpenAI model prefixes from config, falling back to default."""
+def get_openai_model_prefixes() -> list[str]:
+    """Get OpenAI model prefixes from config.
+
+    Raises CCAConfigError if config cannot be loaded.
+    """
     config = _load_config()
-    return config.openai_model_prefixes or default
+    return config.openai_model_prefixes
