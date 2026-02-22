@@ -528,7 +528,7 @@ class ChatCompletionsAdapter(OpenAIBase):
             max_completion_tokens=self.max_tokens if is_thinking else NOT_GIVEN,
             tools=openai_tools or NOT_GIVEN,
             tool_choice=openai_tool_choice or NOT_GIVEN,
-            reasoning_effort=ant_thinking_to_reasoning_effort(self.thinking),
+            reasoning_effort=ant_thinking_to_reasoning_effort(self.thinking) or NOT_GIVEN,
         )
         return response
 

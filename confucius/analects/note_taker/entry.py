@@ -9,6 +9,7 @@ from typing import Any, Callable
 
 from ...core import types as cf
 from ...core.analect import Analect, AnalectRunContext
+from ...core.config import get_llm_params
 
 from ...core.chat_models.bedrock.api.invoke_model import anthropic as ant
 from ...core.entry.base import EntryInput, EntryOutput
@@ -18,14 +19,13 @@ from ...core.llm_manager.llm_params import LLMParams
 from ...core.memory import CfMessage
 from ...orchestrator.anthropic import AnthropicLLMOrchestrator
 from ...orchestrator.extensions import Extension
-from ...orchestrator.extensions.caching.anthropic import AnthropicPromptCaching
 from ...orchestrator.extensions.command_line.base import CommandLineExtension
 from ...orchestrator.extensions.file.edit import FileEditExtension
 from ...orchestrator.extensions.memory.hierarchical import HierarchicalMemoryExtension
 from ...orchestrator.extensions.plain_text import PlainTextExtension
 from ...orchestrator.extensions.plan.llm import LLMCodingArchitectExtension
 from ...orchestrator.types import OrchestratorInput
-from ..code.llm_params import CLAUDE_4_5_SONNET_THINKING
+from ..code.llm_params import QWEN3_8B_NOTETAKER
 from .commands import get_allowed_commands
 from .tasks import NOTE_TAKER_PROMPT
 
@@ -71,12 +71,11 @@ class CCANoteTakerEntry(Analect[EntryInput, EntryOutput], EntryAnalectMixin):
             ),
             PlainTextExtension(),
             HierarchicalMemoryExtension(),
-            AnthropicPromptCaching(),
         ]
 
         orchestrator = AnthropicLLMOrchestrator(
             llm_params=[
-                CLAUDE_4_5_SONNET_THINKING,
+                get_llm_params("note_taker", default=QWEN3_8B_NOTETAKER),
             ],
             extensions=extensions,
             raw_output_parser=None,

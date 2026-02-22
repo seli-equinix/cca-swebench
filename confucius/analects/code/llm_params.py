@@ -43,3 +43,14 @@ GPT5_2_THINKING = LLMParams(
         ).dict(),
     },
 )
+
+QWEN3_8B_NOTETAKER = LLMParams(
+    model="/models/Qwen3-8B-FP8",
+    initial_max_tokens=4096,
+    max_tokens=8192,
+    temperature=0.3,
+    top_p=0.9,
+    additional_kwargs={
+        "base_url": "http://192.168.4.205:8400/v1",
+    },
+)

@@ -8,8 +8,9 @@
 #   SWE-bench:   docker compose -f cca-compose.yml run --rm cca-swebench
 #
 # LLM Backend:
-#   By default points at local vLLM on Spark2 (OpenAI-compatible).
-#   Set OPENAI_API_KEY + OPENAI_BASE_URL to use a different provider.
+#   Model selection configured via config.toml (mounted at /etc/cca/config.toml).
+#   Switch between cloud and local providers by editing [active] section.
+#   Fallback: OPENAI_API_KEY + OPENAI_BASE_URL env vars for default OpenAI endpoint.
 
 services:
   # Interactive CCA agent (REPL mode)
@@ -27,12 +28,16 @@ services:
       # Local vLLM as OpenAI-compatible backend
       - OPENAI_API_KEY=${OPENAI_API_KEY:-dummy}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-http://192.168.4.208:8000/v1}
+      # CCA config file (model selection, provider switching)
+      - CCA_CONFIG_PATH=/etc/cca/config.toml
     network_mode: host
     volumes:
       # Mount workspace for file operations
       - ${CCA_WORKSPACE:-/home/seli/code}:/workspace:rw
       # Persist session data across runs
       - cca-sessions:/home/cca/.confucius
+      # CCA configuration (model profiles, provider switching)
+      - ./config.toml:/etc/cca/config.toml:ro
     working_dir: /workspace
 
   # CCA dev container (source mounted for live editing)
@@ -51,6 +56,7 @@ services:
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY:-dummy}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-http://192.168.4.208:8000/v1}
+      - CCA_CONFIG_PATH=/etc/cca/config.toml
     network_mode: host
     volumes:
       - ${CCA_WORKSPACE:-/home/seli/code}:/workspace:rw
@@ -58,6 +64,7 @@ services:
       # Mount source for live editing (no rebuild needed)
       - ./confucius:/app/confucius:ro
       - ./scripts:/app/scripts:ro
+      - ./config.toml:/etc/cca/config.toml:ro
     working_dir: /workspace
 
   # SWE-bench runner
@@ -74,11 +81,13 @@ services:
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY:-dummy}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-http://192.168.4.208:8000/v1}
+      - CCA_CONFIG_PATH=/etc/cca/config.toml
     network_mode: host
     entrypoint: ["python", "-m", "scripts.run_swebench"]
     volumes:
       - ${CCA_WORKSPACE:-/home/seli/code}:/workspace:rw
       - cca-sessions:/home/cca/.confucius
+      - ./config.toml:/etc/cca/config.toml:ro
 
 volumes:
   cca-sessions:
