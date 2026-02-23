@@ -172,7 +172,7 @@ def judge_model():
         base_url=VLLM_BASE_URL,
         api_key="not-needed",
         temperature=0.0,
-        max_tokens=256,
+        max_tokens=1024,  # Qwen3 thinking model needs room for <think> + label
     )
 
 

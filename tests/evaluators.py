@@ -8,23 +8,90 @@ The LLM judge talks DIRECTLY to vLLM on Spark2:8000/v1 (raw OpenAI-compatible
 API). It does NOT go through CCA. CCA is the system under test; the judge is
 an independent assessor.
 
+Results are posted to Phoenix as **span annotations** (not just span attributes)
+so they appear in the Annotations tab of the Phoenix UI.
+
 Usage in tests:
     evals = evaluate_response(result, message, trace_test, judge_model, "user")
 """
 
 from __future__ import annotations
 
+import logging
 import re
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
 from .cca_client import ChatResult
 
+log = logging.getLogger(__name__)
+
 # Score constants
 SCORE_PASS = 1.0
 SCORE_PARTIAL = 0.5
 SCORE_FAIL = 0.0
+
+# Lazy singleton for Phoenix client
+_phoenix_client = None
+
+
+def _get_phoenix_client():
+    """Get or create a singleton Phoenix client."""
+    global _phoenix_client
+    if _phoenix_client is None:
+        try:
+            from phoenix.client import Client
+            _phoenix_client = Client(base_url="http://192.168.4.204:6006")
+        except Exception as e:
+            log.warning("Could not create Phoenix client: %s", e)
+    return _phoenix_client
+
+
+def _get_span_id(span) -> Optional[str]:
+    """Extract the OTLP hex span ID from an OpenTelemetry span.
+
+    Phoenix needs the hex format (e.g. '7c2304adbf38783d'), not the
+    base64 internal ID.
+    """
+    try:
+        ctx = span.get_span_context()
+        if ctx and ctx.span_id:
+            return format(ctx.span_id, "016x")
+    except Exception:
+        pass
+    return None
+
+
+def _post_annotation(
+    span_id: str,
+    name: str,
+    annotator_kind: str,
+    label: str,
+    score: float,
+    explanation: str = "",
+) -> None:
+    """Post a single annotation to Phoenix via the client API.
+
+    Best-effort: logs warnings on failure, never raises.
+    """
+    client = _get_phoenix_client()
+    if client is None:
+        return
+
+    try:
+        client.spans.add_span_annotation(
+            span_id=span_id,
+            annotation_name=name,
+            annotator_kind=annotator_kind,
+            label=label,
+            score=score,
+            explanation=explanation[:500] if explanation else "",
+            sync=True,
+        )
+    except Exception as e:
+        log.warning("Failed to post annotation '%s': %s", name, e)
+
 
 # ==================== Code Evaluators (no LLM) ====================
 
@@ -34,7 +101,8 @@ def eval_not_empty(result: ChatResult) -> Dict[str, Any]:
     content = result.content.strip()
     passed = len(content) > 0
     return {
-        "name": "not_empty",
+        "name": "response_not_empty",
+        "annotator_kind": "CODE",
         "score": SCORE_PASS if passed else SCORE_FAIL,
         "label": "pass" if passed else "fail",
         "explanation": f"Response length: {len(content)} chars",
@@ -46,6 +114,7 @@ def eval_no_error(result: ChatResult) -> Dict[str, Any]:
     has_error = "error" in result.raw and result.raw["error"]
     return {
         "name": "no_error",
+        "annotator_kind": "CODE",
         "score": SCORE_FAIL if has_error else SCORE_PASS,
         "label": "fail" if has_error else "pass",
         "explanation": str(result.raw.get("error", ""))[:200] if has_error else "Clean response",
@@ -63,6 +132,7 @@ def eval_latency(result: ChatResult) -> Dict[str, Any]:
         score, label = SCORE_FAIL, "slow"
     return {
         "name": "latency",
+        "annotator_kind": "CODE",
         "score": score,
         "label": label,
         "explanation": f"{ms:.0f}ms",
@@ -81,6 +151,7 @@ def eval_code_present(result: ChatResult) -> Optional[Dict[str, Any]]:
     passed = has_code_block or has_def or has_code_pattern
     return {
         "name": "code_present",
+        "annotator_kind": "CODE",
         "score": SCORE_PASS if passed else SCORE_FAIL,
         "label": "pass" if passed else "fail",
         "explanation": f"code_block={has_code_block}, def={has_def}, pattern={has_code_pattern}",
@@ -92,8 +163,9 @@ def eval_user_identified(result: ChatResult) -> Optional[Dict[str, Any]]:
     identified = result.user_identified
     return {
         "name": "user_identified",
+        "annotator_kind": "CODE",
         "score": SCORE_PASS if identified else SCORE_FAIL,
-        "label": "identified" if identified else "anonymous",
+        "label": "pass" if identified else "fail",
         "explanation": f"user_name={result.user_name or 'none'}",
     }
 
@@ -177,6 +249,7 @@ def _run_llm_classify(
 
     return {
         "name": eval_name,
+        "annotator_kind": "LLM",
         "score": score,
         "label": str(label),
         "explanation": str(explanation)[:500],
@@ -221,12 +294,16 @@ def evaluate_response(
     judge_model=None,
     category: str = "user",
 ) -> Dict[str, Dict[str, Any]]:
-    """Run all applicable evaluators and log results to the span.
+    """Run all applicable evaluators and post results as Phoenix annotations.
+
+    Each eval result is:
+      1. Set as a span attribute (for quick filtering in Phoenix)
+      2. Posted as a Phoenix span annotation (appears in Annotations tab)
 
     Args:
         result: ChatResult from cca.chat()
         message: The original user message sent to CCA
-        trace_span: The trace_test span fixture (for logging attributes)
+        trace_span: The trace_test span fixture (OTel span)
         judge_model: OpenAIModel for LLM judge (None = skip LLM evals)
         category: Test category ("user", "websearch", "integration")
 
@@ -258,14 +335,23 @@ def evaluate_response(
             ev = llm_eval(result, message, judge_model)
             evals[ev["name"]] = ev
 
-    # --- Log all results to the Phoenix span ---
+    # --- Log to span attributes (for filtering) ---
     for ev in evals.values():
         name = ev["name"]
         trace_span.set_attribute(f"cca.eval.{name}.score", ev["score"])
         trace_span.set_attribute(f"cca.eval.{name}.label", ev["label"])
-        if ev.get("explanation"):
-            trace_span.set_attribute(
-                f"cca.eval.{name}.explanation", ev["explanation"][:500]
+
+    # --- Post as Phoenix annotations (appears in Annotations tab) ---
+    span_id = _get_span_id(trace_span)
+    if span_id:
+        for ev in evals.values():
+            _post_annotation(
+                span_id=span_id,
+                name=ev["name"],
+                annotator_kind=ev.get("annotator_kind", "CODE"),
+                label=ev["label"],
+                score=ev["score"],
+                explanation=ev.get("explanation", ""),
             )
 
     return evals
