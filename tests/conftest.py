@@ -47,7 +47,7 @@ def phoenix_tracer():
     """
     resource = Resource.create({
         "service.name": PROJECT_NAME,
-        "phoenix.project.name": PROJECT_NAME,
+        "openinference.project.name": PROJECT_NAME,
     })
     provider = TracerProvider(resource=resource)
     exporter = OTLPSpanExporter(endpoint=PHOENIX_ENDPOINT, insecure=True)

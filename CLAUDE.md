@@ -433,7 +433,7 @@ Exceptions: `OrchestratorInterruption` (pause), `OrchestratorTermination` (stop)
 
 ## Phoenix Observability Integration
 
-Phoenix (Arize Phoenix v13.1.1) provides trace visualization for CCA agent debugging.
+Phoenix (Arize Phoenix v13.1.1) provides trace visualization for CCA agent debugging. Tracing is **built-in** — the CCA HTTP server automatically exports spans to Phoenix on startup.
 
 | Property | Value |
 |----------|-------|
@@ -445,50 +445,38 @@ Phoenix (Arize Phoenix v13.1.1) provides trace visualization for CCA agent debug
 | **Database** | PostgreSQL 16 on GlusterFS (`/mnt/glusterfs/phoenix/postgres`) |
 | **Auth** | Disabled (`PHOENIX_ENABLE_AUTH=false`) |
 
-### What Phoenix Traces
+### Phoenix Projects
 
-Phoenix accepts OpenTelemetry traces and displays:
-- LLM calls (input/output, token usage, latency)
-- Tool executions (name, input, output, duration)
-- Agent loop iterations (orchestrator cycles)
-- Error traces and exception chains
-- Full conversation flow visualization
+Traces are routed to named projects via the `openinference.project.name` resource attribute (NOT `phoenix.project.name` — that doesn't work).
 
-### Instrumenting CCA for Phoenix
+| Project | Source | Set By |
+|---------|--------|--------|
+| `cca-http` | Production HTTP server | `PHOENIX_PROJECT_NAME` env var |
+| `cca-aaam-tests` | Test suite (`tests/conftest.py`) | Hardcoded in test config |
 
-To send CCA traces to Phoenix, add OpenTelemetry instrumentation:
+### What Gets Traced
 
-```python
-# Dependencies needed in requirements.txt:
-# opentelemetry-api
-# opentelemetry-sdk
-# opentelemetry-exporter-otlp
-# openinference-instrumentation-openai  (for OpenAI/vLLM calls)
+- Every `/v1/chat/completions` request (session_id, user info, timing, response length)
+- All OpenAI/vLLM HTTP calls (auto-instrumented via `openinference-instrumentation-openai`)
+- Trace hierarchy: parent `cca.agent` span → child vLLM LLM call spans
 
-# Setup in app.py or confucius serve startup:
-from opentelemetry import trace
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanExporter
-from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+### Tracing Module
 
-# Point to Phoenix OTel collector
-exporter = OTLPSpanExporter(endpoint="http://192.168.4.204:4317", insecure=True)
-provider = TracerProvider()
-provider.add_span_processor(BatchSpanExporter(exporter))
-trace.set_tracer_provider(provider)
+**File**: `confucius/core/tracing.py` — centralized OTel initialization
 
-# Auto-instrument OpenAI calls (captures vLLM requests)
-from openinference.instrumentation.openai import OpenAIInstrumentor
-OpenAIInstrumentor().instrument()
-```
+- `init_tracing()` — called in server lifespan startup
+- `shutdown_tracing()` — called at shutdown, flushes remaining spans
+- `get_tracer()` — get a tracer instance for custom spans
+- Graceful no-op if Phoenix is unreachable (never crashes the server)
 
 ### Phoenix Environment Variables
 
-For CCA containers that need to send traces:
+Set in `cca-compose.yml` for `cca-http`:
 ```yaml
 environment:
-  - PHOENIX_COLLECTOR_ENDPOINT=http://192.168.4.204:4317
-  - OTEL_EXPORTER_OTLP_ENDPOINT=http://192.168.4.204:4317
+  - PHOENIX_COLLECTOR_ENDPOINT=http://192.168.4.204:4317  # OTel gRPC endpoint
+  - PHOENIX_PROJECT_NAME=cca-http                          # Phoenix project name
+  - PHOENIX_TRACING_DISABLED=false                         # Set to "true" to disable
 ```
 
 ---

@@ -107,6 +107,9 @@ services:
       - QDRANT_URL=http://192.168.4.205:6333
       - EMBEDDING_URL=http://192.168.4.205:8200
       - SEARXNG_URL=http://192.168.4.205:8888
+      # Phoenix observability (traces → Phoenix UI)
+      - PHOENIX_COLLECTOR_ENDPOINT=http://192.168.4.204:4317
+      - PHOENIX_PROJECT_NAME=cca-http
     network_mode: host
     entrypoint: ["confucius", "serve", "--port", "8500"]
     volumes:

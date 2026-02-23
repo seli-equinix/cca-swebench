@@ -32,7 +32,8 @@ from fastapi import FastAPI, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from ..core.config import get_llm_params, get_router_config
+from ..core.config import CCAConfigError, get_llm_params, get_router_config
+from ..core.tracing import init_tracing, shutdown_tracing, get_tracer
 from ..core.entry.base import EntryInput
 from ..lib.confucius import Confucius
 from .expert_router import (
@@ -52,6 +53,7 @@ from .models import (
     build_completion_response,
     generate_completion_id,
 )
+from .note_observer import NoteObserver, format_notes_for_prompt
 from .session_pool import SessionPool
 from .streaming import sse_stream
 from .user.critical_facts import CriticalFactsExtractor
@@ -92,14 +94,18 @@ SERVED_MODEL_NAME: str = _resolve_served_model_name()
 session_pool: SessionPool
 user_session_mgr: UserSessionManager
 critical_facts_extractor: CriticalFactsExtractor
+note_observer: Optional[NoteObserver] = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # type: ignore[type-arg]
     """Application startup / shutdown lifecycle."""
-    global session_pool, user_session_mgr, critical_facts_extractor
+    global session_pool, user_session_mgr, critical_facts_extractor, note_observer
 
     logger.info("CCA HTTP server starting up...")
+
+    # Initialise Phoenix tracing (exports spans to Phoenix UI)
+    init_tracing()
 
     # Initialise user session manager (Redis + Qdrant)
     user_session_mgr = UserSessionManager()
@@ -109,6 +115,26 @@ async def lifespan(app: FastAPI):  # type: ignore[type-arg]
     critical_facts_extractor = CriticalFactsExtractor(
         redis_client=user_session_mgr._redis
     )
+
+    # Initialise note observer (per-request note extraction → Qdrant)
+    try:
+        nt_params = get_llm_params("note_taker")
+        base_url = (nt_params.additional_kwargs or {}).get(
+            "base_url", "http://192.168.4.205:8400/v1"
+        )
+        note_observer = NoteObserver(
+            llm_url=base_url,
+            llm_model=nt_params.model or "",
+            redis_client=user_session_mgr._redis,
+        )
+        await note_observer.initialize()
+        logger.info("NoteObserver initialised (model=%s)", nt_params.model)
+    except CCAConfigError:
+        logger.info("NoteObserver disabled — 'note_taker' role not in config")
+        note_observer = None
+    except Exception as e:
+        logger.warning("NoteObserver init failed (non-fatal): %s", e)
+        note_observer = None
 
     # Initialise session pool (manages Confucius instances)
     session_pool = SessionPool(max_sessions=50, session_ttl=3600)
@@ -126,8 +152,11 @@ async def lifespan(app: FastAPI):  # type: ignore[type-arg]
     except asyncio.CancelledError:
         pass
 
+    if note_observer:
+        await note_observer.close()
     await close_router_client()
     await user_session_mgr.close()
+    shutdown_tracing()
     logger.info("CCA HTTP server shut down")
 
 
@@ -231,6 +260,7 @@ async def chat_completions(
 ) -> Any:
     """OpenAI-compatible chat completions powered by CCA's full agent loop."""
     start_time = time.time()
+    tracer = get_tracer()
 
     # 1. Derive session ID
     session_id = derive_session_id(request, x_session_id)
@@ -275,6 +305,26 @@ async def chat_completions(
         )
     else:
         user_context = build_anonymous_context()
+
+    # 5b. Enrich context with relevant past notes from Qdrant
+    if note_observer and user and user.user_id and user_message:
+        try:
+            relevant_notes = await note_observer.search_notes(
+                query=user_message,
+                user_id=user.user_id,
+                n_results=3,
+                min_score=0.55,
+            )
+            if relevant_notes:
+                notes_ctx = format_notes_for_prompt(relevant_notes)
+                user_context += f"\n\n{notes_ctx}"
+                logger.debug(
+                    "Injected %d past notes for user %s",
+                    len(relevant_notes),
+                    user.user_id,
+                )
+        except Exception as e:
+            logger.debug("Note enrichment failed (non-fatal): %s", e)
 
     # 6. Create user tools extension
     user_ext = UserToolsExtension(
@@ -376,12 +426,31 @@ async def chat_completions(
             completion_id = generate_completion_id()
 
             async def run_agent() -> None:
-                try:
-                    await pool_entry.cf.invoke_analect(
-                        entry, EntryInput(question=user_message)
-                    )
-                finally:
-                    await io.signal_done()
+                with tracer.start_as_current_span("cca.agent") as span:
+                    span.set_attribute("cca.session_id", session_id)
+                    span.set_attribute("cca.mode", "streaming")
+                    span.set_attribute("cca.message", user_message[:200])
+                    try:
+                        await pool_entry.cf.invoke_analect(
+                            entry, EntryInput(question=user_message)
+                        )
+                        span.set_attribute("cca.status", "success")
+
+                        # Fire note observer in background (non-blocking)
+                        if note_observer:
+                            trajectory = pool_entry.cf.memory_manager.get_session_memory().messages
+                            asyncio.create_task(note_observer.process(
+                                messages=list(trajectory),
+                                session_id=session_id,
+                                user_id=user.user_id if user else None,
+                                user_name=user.display_name if user else None,
+                            ))
+                    except Exception as e:
+                        span.set_attribute("cca.status", "error")
+                        span.set_attribute("cca.error", str(e)[:500])
+                        raise
+                    finally:
+                        await io.signal_done()
 
             agent_task = asyncio.create_task(run_agent())
 
@@ -396,52 +465,75 @@ async def chat_completions(
             )
         else:
             # Non-streaming mode: run agent, collect output, return complete response
-            try:
-                await pool_entry.cf.invoke_analect(
-                    entry, EntryInput(question=user_message)
+            with tracer.start_as_current_span("cca.agent") as span:
+                span.set_attribute("cca.session_id", session_id)
+                span.set_attribute("cca.mode", "non-streaming")
+                span.set_attribute("cca.message", user_message[:200])
+                if user:
+                    span.set_attribute("cca.user", user.display_name)
+
+                try:
+                    await pool_entry.cf.invoke_analect(
+                        entry, EntryInput(question=user_message)
+                    )
+                except Exception as e:
+                    span.set_attribute("cca.status", "error")
+                    span.set_attribute("cca.error", str(e)[:500])
+                    logger.error(f"Agent execution failed: {e}")
+                    return JSONResponse(
+                        status_code=500,
+                        content={
+                            "error": {
+                                "message": f"Agent execution error: {e}",
+                                "type": "server_error",
+                            }
+                        },
+                    )
+
+                # Fire note observer in background (non-blocking)
+                if note_observer:
+                    trajectory = pool_entry.cf.memory_manager.get_session_memory().messages
+                    asyncio.create_task(note_observer.process(
+                        messages=list(trajectory),
+                        session_id=session_id,
+                        user_id=user.user_id if user else None,
+                        user_name=user.display_name if user else None,
+                    ))
+
+                # Collect response from IO buffer
+                response_text = io.get_response_text()
+                if not response_text:
+                    response_text = io.get_all_text()
+
+                thinking_text = io.get_thinking_text()
+
+                # Process critical facts from this exchange
+                await critical_facts_extractor.process_conversation(
+                    session_id, user_message, response_text
                 )
-            except Exception as e:
-                logger.error(f"Agent execution failed: {e}")
-                return JSONResponse(
-                    status_code=500,
-                    content={
-                        "error": {
-                            "message": f"Agent execution error: {e}",
-                            "type": "server_error",
-                        }
-                    },
+
+                # Build OpenAI-compatible response
+                execution_time = (time.time() - start_time) * 1000
+                from .models import ContextMetadata
+
+                metadata = ContextMetadata(
+                    user_identified=session.identified,
+                    user_name=user.display_name if user else None,
+                    execution_time_ms=execution_time,
                 )
 
-            # Collect response from IO buffer
-            response_text = io.get_response_text()
-            if not response_text:
-                response_text = io.get_all_text()
+                span.set_attribute("cca.status", "success")
+                span.set_attribute("cca.execution_time_ms", execution_time)
+                span.set_attribute("cca.response_length", len(response_text))
 
-            thinking_text = io.get_thinking_text()
+                response = build_completion_response(
+                    content=response_text,
+                    model=request.model or SERVED_MODEL_NAME,
+                    reasoning=thinking_text if thinking_text else None,
+                    metadata=metadata,
+                )
 
-            # Process critical facts from this exchange
-            await critical_facts_extractor.process_conversation(
-                session_id, user_message, response_text
-            )
-
-            # Build OpenAI-compatible response
-            execution_time = (time.time() - start_time) * 1000
-            from .models import ContextMetadata
-
-            metadata = ContextMetadata(
-                user_identified=session.identified,
-                user_name=user.display_name if user else None,
-                execution_time_ms=execution_time,
-            )
-
-            response = build_completion_response(
-                content=response_text,
-                model=request.model or SERVED_MODEL_NAME,
-                reasoning=thinking_text if thinking_text else None,
-                metadata=metadata,
-            )
-
-            return response
+                return response
 
     finally:
         # Always release session (save state + unlock)
@@ -558,3 +650,44 @@ async def route_test(request: Request) -> Dict[str, Any]:
         }
     except Exception as e:
         return {"error": str(e)}
+
+
+# ==================== Note-Taker Endpoints ====================
+
+
+@app.get("/v1/notes/stats")
+async def notes_stats() -> Dict[str, Any]:
+    """Statistics about the note-taker knowledge base."""
+    if note_observer is None:
+        return {"error": "NoteObserver not initialised", "enabled": False}
+    return await note_observer.get_stats()
+
+
+@app.get("/v1/notes/search")
+async def notes_search(
+    q: str = "",
+    user_id: Optional[str] = None,
+    n_results: int = 10,
+) -> Dict[str, Any]:
+    """Semantic search over extracted notes.
+
+    Usage:
+        curl "http://host:8500/v1/notes/search?q=vLLM+debugging&user_id=seli"
+    """
+    if note_observer is None:
+        return {"error": "NoteObserver not initialised", "enabled": False}
+    if not q:
+        return {"error": "Missing 'q' query parameter"}
+
+    results = await note_observer.search_notes(
+        query=q,
+        user_id=user_id,
+        n_results=n_results,
+        min_score=0.40,
+    )
+    return {
+        "query": q,
+        "user_id": user_id,
+        "count": len(results),
+        "notes": results,
+    }
