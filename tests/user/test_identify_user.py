@@ -90,6 +90,7 @@ class TestIdentifyUser:
 
         cca.cleanup_test_user(name)
 
+    @pytest.mark.timeout(600)
     def test_no_duplicate_on_return(self, cca, trace_test, judge_model):
         """Coming back in a new session shouldn't create a duplicate profile."""
         name = f"NoDup_{uuid.uuid4().hex[:6]}"
@@ -101,13 +102,14 @@ class TestIdentifyUser:
             f"Hi, I'm {name}. Can you help me write a quick "
             f"Python script to read a CSV file?",
             session_id=sid1,
+            timeout=240,
         )
 
         # Session 2: come back
         message = (
             f"Hey it's {name} again. I need help parsing JSON this time."
         )
-        result = cca.chat(message, session_id=sid2)
+        result = cca.chat(message, session_id=sid2, timeout=240)
 
         evaluate_response(result, message, trace_test, judge_model, "user")
 

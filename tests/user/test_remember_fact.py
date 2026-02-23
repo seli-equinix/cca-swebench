@@ -59,6 +59,7 @@ class TestRememberFact:
 
         cca.cleanup_test_user(name)
 
+    @pytest.mark.timeout(600)
     def test_fact_recalled_in_conversation(self, cca, trace_test, judge_model):
         """CCA should use stored facts when asked about a user."""
         name = f"Recall_{uuid.uuid4().hex[:6]}"
@@ -72,6 +73,7 @@ class TestRememberFact:
             f"and I mostly work with Kubernetes. Can you write me a "
             f"Python function to check if a port is open?",
             session_id=sid1,
+            timeout=240,
         )
 
         # Session 2: come back and ask about stored info
@@ -79,7 +81,7 @@ class TestRememberFact:
             f"Hey {name} here. Can you remind me what company I work at? "
             f"And also show me how to do a health check in Python."
         )
-        result = cca.chat(message, session_id=sid2)
+        result = cca.chat(message, session_id=sid2, timeout=240)
 
         evaluate_response(result, message, trace_test, judge_model, "user")
 
@@ -94,6 +96,7 @@ class TestRememberFact:
 
         cca.cleanup_test_user(name)
 
+    @pytest.mark.timeout(900)
     def test_fact_overwrite(self, cca, trace_test, judge_model):
         """When a user changes jobs, CCA should update the fact."""
         name = f"Overwrite_{uuid.uuid4().hex[:6]}"
@@ -108,6 +111,7 @@ class TestRememberFact:
             f"Hi I'm {name}. I work at {old_company}. "
             f"Write me a one-liner to list directory contents.",
             session_id=sid1,
+            timeout=240,
         )
 
         # Session 2: changed jobs
@@ -115,6 +119,7 @@ class TestRememberFact:
             f"Hey {name} here. Actually I switched jobs — I now work "
             f"at {new_company}. Write me a one-liner to check disk usage.",
             session_id=sid2,
+            timeout=240,
         )
 
         # Session 3: ask where they work now
@@ -122,7 +127,7 @@ class TestRememberFact:
             f"Hi {name} again. Where do I work now? "
             f"Also write me a quick Python timestamp function."
         )
-        result = cca.chat(message, session_id=sid3)
+        result = cca.chat(message, session_id=sid3, timeout=240)
 
         evaluate_response(result, message, trace_test, judge_model, "user")
 

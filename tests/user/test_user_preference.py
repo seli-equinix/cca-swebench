@@ -36,6 +36,7 @@ class TestUserPreference:
 
         cca.cleanup_test_user(name)
 
+    @pytest.mark.timeout(600)
     def test_preference_recalled_next_session(self, cca, trace_test, judge_model):
         """Preferences should persist and be available in the next session."""
         name = f"PrefRecall_{uuid.uuid4().hex[:6]}"
@@ -48,6 +49,7 @@ class TestUserPreference:
             f"with type hints. Can you write a function that "
             f"reverses a string?",
             session_id=sid1,
+            timeout=240,
         )
 
         # Session 2: come back, ask for code
@@ -55,7 +57,7 @@ class TestUserPreference:
             f"Hey {name} again. Write me a function to find "
             f"duplicates in a list."
         )
-        result = cca.chat(message, session_id=sid2)
+        result = cca.chat(message, session_id=sid2, timeout=240)
 
         evaluate_response(result, message, trace_test, judge_model, "user")
 

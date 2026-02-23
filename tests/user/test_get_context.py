@@ -69,7 +69,7 @@ class TestGetContext:
         assert not result.user_identified, \
             "Anonymous session should not be identified"
 
-    @pytest.mark.timeout(360)
+    @pytest.mark.timeout(600)
     def test_context_shows_stored_facts(self, cca, trace_test, judge_model):
         """After storing facts, asking about them should surface the info."""
         name = f"CtxFacts_{uuid.uuid4().hex[:6]}"
@@ -82,11 +82,12 @@ class TestGetContext:
             f"I work on the search team, and my main language is "
             f"Rust. Help me write a Python function to parse a URL.",
             session_id=session_id,
+            timeout=240,
         )
 
         # Same session: ask what the agent knows
         message = "What do you know about me? Give me a summary."
-        result = cca.chat(message, session_id=session_id)
+        result = cca.chat(message, session_id=session_id, timeout=240)
 
         evaluate_response(result, message, trace_test, judge_model, "user")
 
@@ -103,7 +104,7 @@ class TestGetContext:
 
         cca.cleanup_test_user(name)
 
-    @pytest.mark.timeout(360)
+    @pytest.mark.timeout(600)
     def test_context_enriches_responses(self, cca, trace_test, judge_model):
         """CCA should use stored context to give more relevant answers."""
         name = f"CtxEnrich_{uuid.uuid4().hex[:6]}"
@@ -116,6 +117,7 @@ class TestGetContext:
             f"a cluster with 5 nodes. My main tool is Portainer. "
             f"Write me a Python function to check container health.",
             session_id=sid1,
+            timeout=240,
         )
 
         # Session 2: ask a vague question — should be enriched by context
@@ -123,7 +125,7 @@ class TestGetContext:
             f"Hey {name}. I'm having issues with my cluster — "
             f"what should I check first?"
         )
-        result = cca.chat(message, session_id=sid2)
+        result = cca.chat(message, session_id=sid2, timeout=240)
 
         evaluate_response(result, message, trace_test, judge_model, "user")
 

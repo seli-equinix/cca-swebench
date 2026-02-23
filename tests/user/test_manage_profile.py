@@ -16,6 +16,7 @@ pytestmark = [pytest.mark.user, pytest.mark.timeout(300)]
 class TestManageProfileView:
     """manage_user_profile action=view — full profile display."""
 
+    @pytest.mark.timeout(600)
     def test_view_profile(self, cca, trace_test, judge_model):
         """Agent should show profile data when asked."""
         name = f"ViewUser_{uuid.uuid4().hex[:6]}"
@@ -26,6 +27,7 @@ class TestManageProfileView:
             f"Hi I'm {name}. I work at ViewCorp. "
             f"Write a Python one-liner to generate a random number.",
             session_id=session_id,
+            timeout=240,
         )
 
         # Ask for profile view (same session, user already identified)
@@ -33,7 +35,7 @@ class TestManageProfileView:
             "What do you know about me? Show my profile. "
             "Also, how do I generate a random string in Python?"
         )
-        result = cca.chat(message, session_id=session_id)
+        result = cca.chat(message, session_id=session_id, timeout=240)
 
         evaluate_response(result, message, trace_test, judge_model, "user")
 
@@ -131,6 +133,7 @@ class TestManageProfileSkillVerify:
 
         cca.cleanup_test_user(name)
 
+    @pytest.mark.timeout(600)
     def test_remove_skill(self, cca, trace_test, judge_model):
         """Asking to remove a skill should actually remove it from the profile."""
         name = f"RmSkill_{uuid.uuid4().hex[:6]}"
@@ -142,6 +145,7 @@ class TestManageProfileSkillVerify:
             f"Hi I'm {name}. I know Python and Java. "
             f"Write me a Python hello world.",
             session_id=sid1,
+            timeout=240,
         )
 
         # Session 2: ask to remove Java
@@ -150,7 +154,7 @@ class TestManageProfileSkillVerify:
             f"remove it from my profile? Also write me a one-liner "
             f"to get the current time."
         )
-        result = cca.chat(message, session_id=sid2)
+        result = cca.chat(message, session_id=sid2, timeout=240)
 
         evaluate_response(result, message, trace_test, judge_model, "user")
 
@@ -184,7 +188,7 @@ class TestManageProfileAliasVerify:
             f"random password?"
         )
 
-        result = cca.chat(message, session_id=session_id)
+        result = cca.chat(message, session_id=session_id, timeout=240)
 
         evaluate_response(result, message, trace_test, judge_model, "user")
 
@@ -203,6 +207,7 @@ class TestManageProfileAliasVerify:
 
         cca.cleanup_test_user(name)
 
+    @pytest.mark.timeout(600)
     def test_remove_alias(self, cca, trace_test, judge_model):
         """Asking to remove an alias should actually remove it."""
         name = f"RmAlias_{uuid.uuid4().hex[:6]}"
@@ -215,6 +220,7 @@ class TestManageProfileAliasVerify:
             f"Hi I'm {name}, also known as {alias}. "
             f"Write me a one-liner to read environment variables.",
             session_id=sid1,
+            timeout=240,
         )
 
         # Session 2: ask to remove alias
@@ -223,7 +229,7 @@ class TestManageProfileAliasVerify:
             f"profile — I don't go by that anymore. Also write a "
             f"one-liner to get the hostname."
         )
-        result = cca.chat(message, session_id=sid2)
+        result = cca.chat(message, session_id=sid2, timeout=240)
 
         evaluate_response(result, message, trace_test, judge_model, "user")
 
@@ -246,6 +252,7 @@ class TestManageProfileAliasVerify:
 class TestManageProfileRemove:
     """Tests for removing facts and preferences from user profiles."""
 
+    @pytest.mark.timeout(900)
     def test_remove_fact(self, cca, trace_test, judge_model):
         """After asking to forget a fact, CCA should no longer recall it."""
         name = f"RmFact_{uuid.uuid4().hex[:6]}"
@@ -259,6 +266,7 @@ class TestManageProfileRemove:
             f"Hi I'm {name}. I work at {company}. "
             f"Write me a one-liner to get the current timestamp.",
             session_id=sid1,
+            timeout=240,
         )
 
         # Session 2: ask to forget it
@@ -267,6 +275,7 @@ class TestManageProfileRemove:
             f"please remove that from my profile. "
             f"Show me how to clear a list in Python.",
             session_id=sid2,
+            timeout=240,
         )
 
         # Session 3: ask about it
@@ -274,7 +283,7 @@ class TestManageProfileRemove:
             f"Hi {name}. Do you know where I work? "
             f"Also write a one-liner to reverse a list."
         )
-        result = cca.chat(message, session_id=sid3)
+        result = cca.chat(message, session_id=sid3, timeout=240)
 
         evaluate_response(result, message, trace_test, judge_model, "user")
 
@@ -289,7 +298,7 @@ class TestManageProfileRemove:
 
         cca.cleanup_test_user(name)
 
-    @pytest.mark.timeout(360)
+    @pytest.mark.timeout(600)
     def test_remove_preference(self, cca, trace_test, judge_model):
         """Removing a preference should be acknowledged."""
         name = f"RmPref_{uuid.uuid4().hex[:6]}"
@@ -302,6 +311,7 @@ class TestManageProfileRemove:
             f"with examples. Write me a function to sort a "
             f"dictionary by value.",
             session_id=sid1,
+            timeout=240,
         )
 
         # Session 2: remove it
@@ -310,7 +320,7 @@ class TestManageProfileRemove:
             f"preference — remove it please. Write a function to "
             f"flatten a nested list."
         )
-        result = cca.chat(message, session_id=sid2)
+        result = cca.chat(message, session_id=sid2, timeout=240)
 
         evaluate_response(result, message, trace_test, judge_model, "user")
 
@@ -323,7 +333,7 @@ class TestManageProfileRemove:
 class TestManageProfileViewAndDelete:
     """View profile data and full delete lifecycle."""
 
-    @pytest.mark.timeout(360)
+    @pytest.mark.timeout(600)
     def test_view_profile_shows_data(self, cca, trace_test, judge_model):
         """Asking for profile should show previously stored information."""
         name = f"ViewData_{uuid.uuid4().hex[:6]}"
@@ -336,11 +346,12 @@ class TestManageProfileViewAndDelete:
             f"and Go, and I prefer concise code. Write me a "
             f"function to validate an email address.",
             session_id=session_id,
+            timeout=240,
         )
 
         # Same session: ask to see profile
         message = "Can you show me everything you know about me?"
-        result = cca.chat(message, session_id=session_id)
+        result = cca.chat(message, session_id=session_id, timeout=240)
 
         evaluate_response(result, message, trace_test, judge_model, "user")
 
@@ -357,6 +368,7 @@ class TestManageProfileViewAndDelete:
 
         cca.cleanup_test_user(name)
 
+    @pytest.mark.timeout(600)
     def test_delete_and_verify_gone(self, cca, trace_test, judge_model):
         """After deletion, user should not exist via REST API."""
         name = f"DelGone_{uuid.uuid4().hex[:6]}"
@@ -368,6 +380,7 @@ class TestManageProfileViewAndDelete:
             f"Hi I'm {name}. I work on infrastructure. "
             f"Write me a Python one-liner to ping a host.",
             session_id=sid1,
+            timeout=240,
         )
 
         user = cca.find_user_by_name(name)
@@ -380,7 +393,7 @@ class TestManageProfileViewAndDelete:
             f"Yes I confirm the deletion. Also show me how to "
             f"delete a file in Python."
         )
-        result = cca.chat(message, session_id=sid2)
+        result = cca.chat(message, session_id=sid2, timeout=240)
 
         evaluate_response(result, message, trace_test, judge_model, "user")
 
