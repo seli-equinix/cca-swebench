@@ -18,10 +18,16 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies (infra expert needs SSH, Docker CLI, network tools)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     curl \
+    sshpass \
+    openssh-client \
+    docker.io \
+    iputils-ping \
+    dnsutils \
+    net-tools \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
