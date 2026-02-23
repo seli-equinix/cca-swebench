@@ -507,7 +507,7 @@ class NoteObserver:
         query: str,
         user_id: Optional[str] = None,
         n_results: int = 5,
-        min_score: float = 0.55,
+        min_score: float = 0.2,
     ) -> List[Dict[str, Any]]:
         """Semantic search over extracted notes.
 

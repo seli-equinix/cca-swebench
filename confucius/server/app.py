@@ -313,7 +313,7 @@ async def chat_completions(
                 query=user_message,
                 user_id=user.user_id,
                 n_results=3,
-                min_score=0.55,
+                min_score=0.2,
             )
             if relevant_notes:
                 notes_ctx = format_notes_for_prompt(relevant_notes)
@@ -683,7 +683,7 @@ async def notes_search(
         query=q,
         user_id=user_id,
         n_results=n_results,
-        min_score=0.40,
+        min_score=0.15,
     )
     return {
         "query": q,
