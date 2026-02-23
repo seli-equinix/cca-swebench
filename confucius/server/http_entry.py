@@ -36,7 +36,8 @@ from ..orchestrator.extensions.plain_text import PlainTextExtension
 from ..orchestrator.extensions.plan.llm import LLMCodingArchitectExtension
 from ..orchestrator.extensions.expert.reviewer import CodeReviewerExtension
 from ..orchestrator.extensions.expert.test_gen import TestGeneratorExtension
-from ..orchestrator.extensions.solo import SoloModeExtension
+## SoloModeExtension is CLI-only (forces progress-tracking loop).
+## HTTP AAAM uses a bounded max_iterations instead.
 from ..orchestrator.types import OrchestratorInput
 from ..analects.code.commands import get_allowed_commands
 from ..analects.code.tasks import get_task_definition
@@ -110,7 +111,6 @@ class HttpCodeAssistEntry(Analect[EntryInput, EntryOutput], EntryAnalectMixin):
             PlainTextExtension(),
             HierarchicalMemoryExtension(),
             AnthropicPromptCaching(),
-            SoloModeExtension(),
         ]
 
         # INJECT: User tools extension (identify_user, remember_user_fact, etc.)
@@ -120,13 +120,14 @@ class HttpCodeAssistEntry(Analect[EntryInput, EntryOutput], EntryAnalectMixin):
         # INJECT: Utility tools (web_search, fetch_url_content)
         extensions.append(UtilityToolsExtension())
 
-        # Same orchestrator invocation as CLI mode
+        # HTTP AAAM: bounded iterations (not the CLI default of 1000)
         orchestrator = AnthropicLLMOrchestrator(
             llm_params=[
                 get_llm_params("coder"),
             ],
             extensions=extensions,
             raw_output_parser=None,
+            max_iterations=20,
         )
 
         await context.invoke_analect(

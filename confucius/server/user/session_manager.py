@@ -1107,12 +1107,12 @@ class UserSessionManager:
                 if self._embedding_func is not None:
                     embeddings = await self._embedding_func([name])
                     if embeddings:
-                        results = self._qdrant.search(
+                        results = self._qdrant.query_points(
                             collection_name=PROFILES_COLLECTION,
-                            query_vector=embeddings[0],
+                            query=embeddings[0],
                             limit=1,
                             score_threshold=0.85,
-                        )
+                        ).points
                         if results:
                             logger.info(
                                 "Semantic match found: %s (score: %.3f)",
@@ -1696,13 +1696,13 @@ class UserSessionManager:
             msg_embedding = embeddings[0]
 
             # Search with threshold
-            results = self._qdrant.search(
+            results = self._qdrant.query_points(
                 collection_name=CONTEXTS_COLLECTION,
-                query_vector=msg_embedding,
+                query=msg_embedding,
                 limit=3,
                 with_payload=True,
                 score_threshold=self.ASK_THRESHOLD,
-            )
+            ).points
 
             logger.info(
                 "User inference query: %d matches above threshold %.2f",
@@ -1712,12 +1712,12 @@ class UserSessionManager:
 
             if not results:
                 # Peek without threshold for debug logging
-                all_results = self._qdrant.search(
+                all_results = self._qdrant.query_points(
                     collection_name=CONTEXTS_COLLECTION,
-                    query_vector=msg_embedding,
+                    query=msg_embedding,
                     limit=3,
                     with_payload=True,
-                )
+                ).points
                 if all_results:
                     logger.info(
                         "User inference: Best match score %.3f "
