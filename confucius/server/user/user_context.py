@@ -108,6 +108,30 @@ Once identified, you'll have access to their saved facts and preferences!
 """
 
 
+def build_pending_new_user_context(extracted_name: str) -> str:
+    """Build context when a new user has been detected but not yet created.
+
+    The system extracted a name from the message but no matching user exists.
+    This tells the LLM to call identify_user() immediately to create the profile.
+    """
+    return f"""
+═══════════════════════════════════════════════════
+     NEW USER DETECTED — ACTION REQUIRED
+═══════════════════════════════════════════════════
+The user introduced themselves as **{extracted_name}**. This is a NEW user
+(no existing profile found).
+
+**You MUST call `identify_user` with name="{extracted_name}" BEFORE doing
+anything else.** This creates their profile so you can remember them.
+
+After identification, also use:
+- **remember_user_fact** to save any facts they shared (employer, skills, etc.)
+- **manage_user_profile** to add skills or aliases mentioned
+
+Then proceed to answer their question naturally.
+"""
+
+
 def build_uncertain_context(
     potential_name: str,
     confidence: float,

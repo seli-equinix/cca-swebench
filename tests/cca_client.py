@@ -219,28 +219,24 @@ class CCAClient:
             return None
 
     def cleanup_test_user(self, name: str, session_id: Optional[str] = None) -> None:
-        """Ask the agent to delete a test user profile.
+        """Delete a test user profile via REST API.
 
+        Uses DELETE /users/{user_id} directly — no LLM round-trip needed.
         Best-effort cleanup — failures are logged but don't raise.
         """
-        sid = session_id or f"cleanup-{uuid.uuid4().hex[:8]}"
         with self.tracer.start_as_current_span("cca.cleanup_user") as span:
             span.set_attribute("cca.cleanup_target", name)
             try:
-                # First identify as the user
-                self.chat(
-                    f"I'm {name}. Use identify_user to identify me as {name}.",
-                    session_id=sid,
-                    timeout=120,
+                user = self.find_user_by_name(name)
+                if user is None:
+                    span.set_attribute("cca.cleanup_status", "not_found")
+                    return
+                user_id = user["user_id"]
+                resp = self._client.delete(
+                    f"{self.base_url}/users/{user_id}",
+                    timeout=TIMEOUT_DIAGNOSTIC,
                 )
-                # Then delete with confirmation
-                self.chat(
-                    f"Delete my user profile completely. "
-                    f"Use manage_user_profile with action delete_profile "
-                    f"and confirm_delete=true. I confirm deletion.",
-                    session_id=sid,
-                    timeout=120,
-                )
-                span.set_attribute("cca.cleanup_status", "done")
+                span.set_attribute("cca.cleanup_status", "deleted")
+                span.set_attribute("cca.cleanup_response", resp.text[:200])
             except Exception as e:
                 span.set_attribute("cca.cleanup_status", f"failed: {e}")

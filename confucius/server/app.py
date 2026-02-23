@@ -64,6 +64,7 @@ from .user.session_manager import UserSessionManager
 from .user.tools_extension import UserToolsExtension
 from .user.user_context import (
     build_anonymous_context,
+    build_pending_new_user_context,
     build_uncertain_context,
     build_user_context,
 )
@@ -301,6 +302,10 @@ async def chat_completions(
             session_id
         )
         user_context = build_user_context(user, critical_facts_str, id_result or None)
+    elif id_result.get("action") == "asking_new":
+        user_context = build_pending_new_user_context(
+            id_result.get("extracted_name", ""),
+        )
     elif id_result.get("action") == "asking":
         user_context = build_uncertain_context(
             id_result.get("potential_user", ""),
@@ -604,6 +609,15 @@ async def list_users() -> Dict[str, Any]:
             for u in users
         ],
     }
+
+
+@app.delete("/users/{user_id}")
+async def delete_user(user_id: str) -> Dict[str, Any]:
+    """Delete a user profile by user_id (for testing/admin)."""
+    result = await user_session_mgr.delete_user_profile(
+        user_id, confirm_delete=True
+    )
+    return result
 
 
 @app.get("/sessions")
