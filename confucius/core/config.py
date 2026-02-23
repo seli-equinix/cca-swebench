@@ -140,6 +140,31 @@ class ProviderProfile(BaseModel):
         )
 
 
+class RouterConfig(BaseModel):
+    """Expert router configuration (Functionary-based classification)."""
+
+    enabled: bool = False
+    url: str = "http://192.168.4.204:8001"
+    timeout_ms: int = 10000
+    fallback_entry: str = "coder"
+    temperature: float = 0.1
+
+    class Config:
+        extra = "ignore"
+
+
+class ToolRouterConfig(BaseModel):
+    """In-loop tool selection configuration (Phase 2)."""
+
+    enabled: bool = False
+    url: str = "http://192.168.4.204:8001"
+    confidence_threshold: float = 0.8
+    mechanical_turns_only: bool = True
+
+    class Config:
+        extra = "ignore"
+
+
 class CCAConfig(BaseModel):
     """Top-level CCA configuration."""
 
@@ -148,6 +173,8 @@ class CCAConfig(BaseModel):
         default_factory=lambda: ["qwen"],
     )
     providers: dict[str, dict[str, ProviderProfile]] = Field(default_factory=dict)
+    router: RouterConfig = Field(default_factory=RouterConfig)
+    tool_router: ToolRouterConfig = Field(default_factory=ToolRouterConfig)
 
     class Config:
         extra = "ignore"
@@ -261,3 +288,23 @@ def get_openai_model_prefixes() -> list[str]:
     """
     config = _load_config()
     return config.openai_model_prefixes
+
+
+def get_router_config() -> RouterConfig:
+    """Get expert router configuration.
+
+    Returns RouterConfig (enabled=False if section is missing).
+    Never raises — router is optional.
+    """
+    config = _load_config()
+    return config.router
+
+
+def get_tool_router_config() -> ToolRouterConfig:
+    """Get in-loop tool router configuration (Phase 2).
+
+    Returns ToolRouterConfig (enabled=False if section is missing).
+    Never raises — tool router is optional.
+    """
+    config = _load_config()
+    return config.tool_router

@@ -52,15 +52,19 @@ git submodule update --init --recursive nvidia-dgx-spark/cca
 
 ## Architecture Overview
 
-CCA has two modes: **CLI** (interactive REPL) and **HTTP** (Agent-as-a-Model endpoint). Both use the same agent engine.
+CCA has two modes: **CLI** (interactive REPL) and **HTTP** (Agent-as-a-Model endpoint). Both use the same agent engine. HTTP mode includes an **Expert Router** that classifies requests and selects the right entry.
 
 ```
 CLI Mode (confucius code)               HTTP Mode (confucius serve --port 8500)
   -> Confucius (session manager)           -> FastAPI app (app.py)
     -> CodeAssistEntry (Analect)             -> SessionPool -> Confucius instances
       -> AnthropicLLMOrchestrator              -> UserSessionManager (Redis + Qdrant)
-        -> Extensions (tools)                  -> HttpCodeAssistEntry (user context injected)
-        -> AutoLLMManager -> LLM                 -> AnthropicLLMOrchestrator (SAME engine)
+        -> Extensions (tools)                  -> Expert Router (Functionary on node5:8001)
+        -> AutoLLMManager -> LLM                 -> classify_request() → RouteDecision
+                                                 -> HttpCodeAssistEntry (coding)
+                                                 -> HttpInfraEntry (infrastructure)
+                                                 -> Direct answer / Clarification (no agent loop)
+                                                   -> AnthropicLLMOrchestrator (SAME engine)
                                                    -> All extensions (SAME) + UserToolsExtension
                                                    -> AutoLLMManager -> LLM (SAME)
 ```
@@ -146,6 +150,7 @@ CCA runs as a persistent HTTP server on **Spark1 port 8500**, accepting OpenAI-c
 | `POST` | `/v1/chat/completions` | OpenAI-compatible chat (streaming + non-streaming) |
 | `GET` | `/v1/models` | Lists served model (real name from config.toml) |
 | `GET` | `/health` | Health check (status, version, active sessions) |
+| `POST` | `/route/test` | Test expert router classification (no agent loop) |
 | `GET` | `/users` | List all known user profiles |
 | `GET` | `/sessions` | List active agent sessions |
 | `GET` | `/stats` | Diagnostic statistics |
@@ -197,18 +202,30 @@ Clients are identified via session ID, derived in priority order:
 ```
 confucius/server/
 ├── __init__.py              # Package init
-├── app.py                   # FastAPI app, routes, session ID derivation, lifespan
+├── app.py                   # FastAPI app, routes, expert routing, session ID derivation
 ├── models.py                # OpenAI-compatible Pydantic models (request/response/streaming)
 ├── io_adapter.py            # HttpIOInterface — captures orchestrator output for HTTP
 ├── session_pool.py          # Concurrent Confucius instance management (per-session locks)
 ├── streaming.py             # SSE formatting with 8s keepalive
-├── http_entry.py            # HttpCodeAssistEntry — injects user context into agent
+├── expert_router.py         # Functionary-based request classifier → RouteDecision
+├── http_entry.py            # HttpCodeAssistEntry — coding agent with user context
+├── http_infra_entry.py      # HttpInfraEntry — infrastructure agent (Docker, SSH, etc.)
+├── utility_tools.py         # UtilityToolsExtension (web_search, fetch_url_content)
 └── user/
     ├── __init__.py
     ├── session_manager.py   # UserSessionManager (Redis + Qdrant), profiles, identification
     ├── critical_facts.py    # CriticalFactsExtractor (auto-extract IPs, passwords, keys)
     ├── user_context.py      # Build personalization text for system prompt injection
     └── tools_extension.py   # UserToolsExtension (5 LLM-callable tools, CCA native)
+```
+
+### Infrastructure Analect
+
+```
+confucius/analects/infrastructure/
+├── __init__.py              # Package init
+├── commands.py              # Expanded CLI allowlist (docker, ssh, systemctl, etc.)
+└── tasks.py                 # Infrastructure system prompt with cluster topology
 ```
 
 ### Key Integration Points
@@ -228,6 +245,83 @@ confucius/server/
 - Per-session `asyncio.Lock` (serializes requests within a session)
 - TTL-based cleanup (default 1 hour)
 - Max 50 concurrent sessions
+
+---
+
+## Expert Router (Functionary Classification)
+
+Incoming HTTP requests are classified by a small Functionary model (8B, Q4_0) running on node5 via llama.cpp. This happens **before** the main agent loop, with ~50-100ms overhead.
+
+### Router Infrastructure
+
+| Property | Value |
+|----------|-------|
+| **Model** | `functionary-small-v3.2.Q4_0.gguf` (4.34GB) |
+| **Server** | llama.cpp `server-cuda` b8124 on node5 (192.168.4.204:8001) |
+| **GPU** | RTX 5070 SM120, ~115 tok/s generation |
+| **Template** | Custom Jinja from HuggingFace `meetkai/functionary-small-v3.2` |
+| **Config** | `config.toml` `[router]` section |
+
+### Expert Types
+
+| Expert | Entry Class | Description |
+|--------|-------------|-------------|
+| `coder` | `HttpCodeAssistEntry` | Code editing, debugging, git, file operations |
+| `infrastructure` | `HttpInfraEntry` | Docker, SSH, Swarm, monitoring, deployments |
+| `search` | `HttpCodeAssistEntry` | (Future) Dedicated search expert |
+| `planner` | `HttpCodeAssistEntry` | (Future) Multi-step planning expert |
+| `direct` | *(no agent loop)* | Simple Q&A answered by Functionary directly |
+| `clarify` | *(no agent loop)* | Ambiguous request — asks user for more info |
+
+### How Routing Works
+
+1. User message arrives at `/v1/chat/completions`
+2. `classify_request()` sends message to Functionary with 6 routing tools
+3. Functionary calls one tool (e.g., `route_to_infrastructure`) with parameters
+4. `RouteDecision` is built from the tool call response
+5. If `DIRECT` or `CLARIFY` → return immediately (no agent loop)
+6. Otherwise → select entry class based on expert type, inject `route.to_context_header()` into system prompt
+
+### Config (config.toml)
+
+```toml
+[router]
+enabled = true
+url = "http://192.168.4.204:8001"
+timeout_ms = 10000
+fallback_entry = "coder"
+temperature = 0.1
+
+[tool_router]      # Phase 2 — in-loop tool selection (not yet enabled)
+enabled = false
+```
+
+### Test Classification
+
+```bash
+# Quick classification test (no agent loop)
+curl -X POST http://192.168.4.205:8500/route/test \
+  -H "Content-Type: application/json" \
+  -d '{"message": "check docker swarm node status"}'
+
+# Expected: {"expert": "infrastructure", "task_summary": "...", ...}
+
+curl -X POST http://192.168.4.205:8500/route/test \
+  -H "Content-Type: application/json" \
+  -d '{"message": "refactor the login handler in auth.py"}'
+
+# Expected: {"expert": "coder", "task_summary": "...", ...}
+```
+
+### HttpInfraEntry vs HttpCodeAssistEntry
+
+| Feature | HttpCodeAssistEntry | HttpInfraEntry |
+|---------|--------------------|--------------------|
+| System prompt | Code-focused task definition | Cluster topology, SSH access, services |
+| Allowed commands | Conservative (git, python, grep) | Expanded (docker, ssh, systemctl, sshpass) |
+| Extensions | + CodeReviewer, TestGenerator | No code review/test gen (not relevant) |
+| Max iterations | 20 | 30 (infra tasks need more steps) |
+| Max output lines | 300 | 500 (infra output is verbose) |
 
 ---
 
@@ -512,13 +606,17 @@ CCA_WORKSPACE=/home/seli/code
 
 | File | What to Change |
 |------|---------------|
-| `config.toml` | Model selection, provider switching, model prefixes |
-| `confucius/server/app.py` | HTTP routes, session handling, user identification flow |
-| `confucius/server/http_entry.py` | User context injection, extension list for HTTP mode |
+| `config.toml` | Model selection, provider switching, model prefixes, router config |
+| `confucius/server/app.py` | HTTP routes, session handling, expert routing, user identification flow |
+| `confucius/server/expert_router.py` | Router classification logic, tool definitions, system prompt |
+| `confucius/server/http_entry.py` | User context injection, extension list for coding tasks |
+| `confucius/server/http_infra_entry.py` | Infrastructure entry, expanded commands, cluster-aware prompt |
 | `confucius/server/user/session_manager.py` | User identification logic, Redis/Qdrant operations |
 | `confucius/server/user/tools_extension.py` | LLM-callable user tools (identify, remember, etc.) |
-| `confucius/analects/code/commands.py` | Add/remove allowed CLI commands |
-| `confucius/analects/code/tasks.py` | Modify system prompt / task definition |
+| `confucius/analects/code/commands.py` | Add/remove allowed CLI commands (coding) |
+| `confucius/analects/code/tasks.py` | Modify coding system prompt / task definition |
+| `confucius/analects/infrastructure/commands.py` | Add/remove allowed CLI commands (infra) |
+| `confucius/analects/infrastructure/tasks.py` | Modify infrastructure system prompt / cluster topology |
 | `cca-compose.yml` | Docker service configuration, ports, env vars |
 
 ---

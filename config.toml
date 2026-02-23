@@ -104,3 +104,23 @@ provider = "openai"
 base_url = "http://192.168.4.208:8000/v1"
 initial_max_tokens = 4096
 temperature = 0.3
+
+# ──────────────────────────────────────────────
+# EXPERT ROUTER (Functionary on node5)
+# ──────────────────────────────────────────────
+# Uses the small Functionary 8B model to classify incoming requests
+# and route them to the appropriate CCA expert entry.
+
+[router]
+enabled = true
+url = "http://192.168.4.204:8001"     # Functionary on node5 RTX 5070
+timeout_ms = 10000                     # Classification timeout (generous for cold starts)
+fallback_entry = "coder"               # If classification fails, use this entry
+temperature = 0.1                      # Low temp for deterministic routing
+
+# In-loop tool selection (Phase 2 — disabled for now)
+[tool_router]
+enabled = false
+url = "http://192.168.4.204:8001"
+confidence_threshold = 0.8
+mechanical_turns_only = true

@@ -32,10 +32,17 @@ from fastapi import FastAPI, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from ..core.config import get_llm_params
+from ..core.config import get_llm_params, get_router_config
 from ..core.entry.base import EntryInput
 from ..lib.confucius import Confucius
+from .expert_router import (
+    ExpertType,
+    RouteDecision,
+    classify_request,
+    close_client as close_router_client,
+)
 from .http_entry import HttpCodeAssistEntry
+from .http_infra_entry import HttpInfraEntry
 from .io_adapter import HttpIOInterface
 from .models import (
     ChatCompletionRequest,
@@ -119,6 +126,7 @@ async def lifespan(app: FastAPI):  # type: ignore[type-arg]
     except asyncio.CancelledError:
         pass
 
+    await close_router_client()
     await user_session_mgr.close()
     logger.info("CCA HTTP server shut down")
 
@@ -275,25 +283,91 @@ async def chat_completions(
         critical_facts=critical_facts_extractor,
     )
 
-    # 7. Create HTTP entry with user context + tools
-    entry = HttpCodeAssistEntry(
-        user_context=user_context,
-        user_extension=user_ext,
-    )
-
-    # 8. Extract user message
+    # 7. Classify request via Functionary router (if enabled)
+    route: Optional[RouteDecision] = None
+    router_config = get_router_config()
     user_message = extract_last_user_message(request.messages)
+
+    if router_config.enabled and user_message:
+        try:
+            # Build recent context for follow-up awareness
+            recent: List[Dict[str, str]] = []
+            for msg in request.messages[-4:]:
+                if msg.role in ("user", "assistant") and msg.content:
+                    recent.append({"role": msg.role, "content": msg.content[:500]})
+
+            route = await classify_request(user_message, router_config, recent)
+            logger.info(
+                f"Router: {route.expert.value} | {route.task_summary[:80]} "
+                f"({route.classification_time_ms:.0f}ms)"
+            )
+
+            # Handle DIRECT answers (no agent loop needed)
+            if route.is_direct_answer and route.direct_answer:
+                execution_time = (time.time() - start_time) * 1000
+                from .models import ContextMetadata
+
+                metadata = ContextMetadata(
+                    user_identified=session.identified,
+                    user_name=user.display_name if user else None,
+                    execution_time_ms=execution_time,
+                )
+                resp = build_completion_response(
+                    content=route.direct_answer,
+                    model=request.model or SERVED_MODEL_NAME,
+                    metadata=metadata,
+                )
+                return resp
+
+            # Handle CLARIFY — ask user for more info
+            if route.is_clarification and route.clarification_question:
+                execution_time = (time.time() - start_time) * 1000
+                from .models import ContextMetadata
+
+                metadata = ContextMetadata(
+                    user_identified=session.identified,
+                    user_name=user.display_name if user else None,
+                    execution_time_ms=execution_time,
+                )
+                resp = build_completion_response(
+                    content=route.clarification_question,
+                    model=request.model or SERVED_MODEL_NAME,
+                    metadata=metadata,
+                )
+                return resp
+
+        except Exception as e:
+            logger.warning(f"Router classification failed, falling back to coder: {e}")
+            route = None
+
+    # 8. Select entry based on routing decision
+    route_context = route.to_context_header() if route else ""
+
+    if route and route.expert == ExpertType.INFRASTRUCTURE:
+        entry = HttpInfraEntry(
+            user_context=user_context,
+            user_extension=user_ext,
+            route_context=route_context,
+        )
+    else:
+        # Default: coder (also handles SEARCH, PLANNER for now)
+        entry = HttpCodeAssistEntry(
+            user_context=user_context,
+            user_extension=user_ext,
+        )
+
+    # 9. Validate user message (already extracted in step 7)
     if not user_message:
         return JSONResponse(
             status_code=400,
             content={"error": {"message": "No user message found", "type": "invalid_request_error"}},
         )
 
-    # 9. Create fresh IO for this request
+    # 10. Create fresh IO for this request
     stream_queue = asyncio.Queue() if request.stream else None
     io = HttpIOInterface(stream_queue=stream_queue)
 
-    # 10. Acquire session from pool → Confucius instance
+    # 11. Acquire session from pool → Confucius instance
     pool_entry = await session_pool.acquire(session_id, io)
 
     try:
@@ -452,3 +526,35 @@ async def stats() -> Dict[str, Any]:
         },
         "user_session_manager": sm_stats,
     }
+
+
+@app.post("/route/test")
+async def route_test(request: Request) -> Dict[str, Any]:
+    """Test the expert router classification without running the agent loop.
+
+    Usage:
+        curl -X POST http://host:8500/route/test \\
+            -d '{"message": "check docker swarm status"}'
+    """
+    body = await request.json()
+    message = body.get("message", "")
+    if not message:
+        return {"error": "Missing 'message' field"}
+
+    router_config = get_router_config()
+    if not router_config.enabled:
+        return {"error": "Router is disabled in config.toml", "enabled": False}
+
+    try:
+        route = await classify_request(message, router_config)
+        return {
+            "expert": route.expert.value,
+            "task_summary": route.task_summary,
+            "parameters": route.parameters,
+            "direct_answer": route.direct_answer or None,
+            "clarification_question": route.clarification_question or None,
+            "classification_time_ms": round(route.classification_time_ms, 1),
+            "context_header": route.to_context_header(),
+        }
+    except Exception as e:
+        return {"error": str(e)}
