@@ -87,7 +87,7 @@ def init_tracing() -> Optional[trace.Tracer]:
         # Auto-instrument OpenAI client calls (captures all vLLM HTTP requests)
         try:
             from openinference.instrumentation.openai import OpenAIInstrumentor
-            OpenAIInstrumentor().instrument()
+            OpenAIInstrumentor().instrument(tracer_provider=_provider)
             logger.info("OpenAI auto-instrumentation enabled (vLLM calls traced)")
         except Exception as e:
             logger.warning(f"OpenAI auto-instrumentation failed (non-fatal): {e}")

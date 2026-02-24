@@ -29,6 +29,8 @@ from ..core.tracing import (
     INPUT_VALUE,
     OUTPUT_VALUE,
     LLM_MODEL_NAME,
+    LLM_TOKEN_COUNT_PROMPT,
+    LLM_TOKEN_COUNT_COMPLETION,
 )
 
 logger = logging.getLogger(__name__)
@@ -251,8 +253,24 @@ class NoteObserver:
                     llm_span.set_attribute(OPENINFERENCE_SPAN_KIND, "LLM")
                     llm_span.set_attribute(LLM_MODEL_NAME, self._llm_model)
                     llm_span.set_attribute("cca.note.llm_url", self._llm_url)
-                    notes = await self._extract_notes(messages)
-                    llm_span.set_attribute("cca.note.notes_extracted", len(notes) if notes else 0)
+                    notes, llm_usage = await self._extract_notes(messages)
+                    llm_span.set_attribute(
+                        "cca.note.notes_extracted",
+                        len(notes) if notes else 0,
+                    )
+                    if llm_usage:
+                        llm_span.set_attribute(
+                            LLM_TOKEN_COUNT_PROMPT,
+                            llm_usage.get("prompt_tokens", 0),
+                        )
+                        llm_span.set_attribute(
+                            LLM_TOKEN_COUNT_COMPLETION,
+                            llm_usage.get("completion_tokens", 0),
+                        )
+                        llm_span.set_attribute(
+                            OUTPUT_VALUE,
+                            llm_usage.get("content", "")[:500],
+                        )
 
                 if not notes:
                     logger.debug(
@@ -331,19 +349,24 @@ class NoteObserver:
     # LLM extraction
     # ------------------------------------------------------------------
 
-    async def _extract_notes(self, messages: List[Any]) -> List[Dict[str, Any]]:
-        """Call Spark1 Qwen3-8B to extract structured notes from the trajectory.
+    async def _extract_notes(
+        self, messages: List[Any]
+    ) -> tuple[List[Dict[str, Any]], Optional[Dict[str, Any]]]:
+        """Call Spark1 Qwen3-8B to extract structured notes.
 
-        Uses AsyncOpenAI client so the call is auto-traced by OpenAIInstrumentor
-        (shows up in Phoenix as a ChatCompletion span with model, tokens, etc.).
+        Uses AsyncOpenAI client so the call is auto-traced by
+        OpenAIInstrumentor (ChatCompletion span with model, tokens).
+
+        Returns (notes, usage_info) where usage_info contains token
+        counts and raw content for span enrichment.
         """
         if self._openai_client is None:
-            return []
+            return [], None
 
         # Build a condensed view of the conversation
         trajectory_text = self._format_trajectory(messages)
         if not trajectory_text.strip():
-            return []
+            return [], None
 
         try:
             response = await self._openai_client.chat.completions.create(
@@ -352,7 +375,10 @@ class NoteObserver:
                     {"role": "system", "content": EXTRACTION_SYSTEM_PROMPT},
                     {
                         "role": "user",
-                        "content": f"Analyze this conversation and extract insights:\n\n{trajectory_text}",
+                        "content": (
+                            "Analyze this conversation and extract "
+                            f"insights:\n\n{trajectory_text}"
+                        ),
                     },
                 ],
                 temperature=self._temperature,
@@ -362,15 +388,23 @@ class NoteObserver:
             # Extract the LLM's response text
             content = response.choices[0].message.content or ""
 
+            # Build usage info for span enrichment
+            usage_info: Dict[str, Any] = {"content": content}
+            if response.usage:
+                usage_info["prompt_tokens"] = response.usage.prompt_tokens
+                usage_info["completion_tokens"] = (
+                    response.usage.completion_tokens
+                )
+
             # Strip thinking tags if present (Qwen3 may include them)
             content = self._strip_thinking(content)
 
             # Parse JSON from the response
-            return self._parse_notes_json(content)
+            return self._parse_notes_json(content), usage_info
 
         except Exception as e:
             logger.warning("Note extraction LLM call failed: %s", e)
-            return []
+            return [], None
 
     def _format_trajectory(self, messages: List[Any]) -> str:
         """Format recent messages into a readable trajectory string."""
