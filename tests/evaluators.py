@@ -93,6 +93,29 @@ def _post_annotation(
         log.warning("Failed to post annotation '%s': %s", name, e)
 
 
+def post_deferred_annotations(span) -> None:
+    """Post all annotations that were collected during the test.
+
+    Called by the trace_test fixture in conftest.py AFTER the span is
+    closed and force_flush() has delivered it to Phoenix.
+    """
+    pending = getattr(span, "_pending_annotations", [])
+    if not pending:
+        return
+
+    for anno in pending:
+        _post_annotation(
+            span_id=anno["span_id"],
+            name=anno["name"],
+            annotator_kind=anno["annotator_kind"],
+            label=anno["label"],
+            score=anno["score"],
+            explanation=anno.get("explanation", ""),
+        )
+
+    log.info("Posted %d annotations for span %s", len(pending), pending[0]["span_id"])
+
+
 # ==================== Code Evaluators (no LLM) ====================
 
 
@@ -341,9 +364,23 @@ def evaluate_response(
         trace_span.set_attribute(f"cca.eval.{name}.score", ev["score"])
         trace_span.set_attribute(f"cca.eval.{name}.label", ev["label"])
 
-    # --- Post as Phoenix annotations (appears in Annotations tab) ---
+    # --- Defer annotations until span is closed + flushed ---
+    # The trace_test fixture in conftest.py calls post_deferred_annotations()
+    # AFTER the span closes and force_flush() completes. This avoids 404
+    # errors from Phoenix when the span hasn't arrived yet.
     span_id = _get_span_id(trace_span)
-    if span_id:
+    if span_id and hasattr(trace_span, "_pending_annotations"):
+        for ev in evals.values():
+            trace_span._pending_annotations.append({
+                "span_id": span_id,
+                "name": ev["name"],
+                "annotator_kind": ev.get("annotator_kind", "CODE"),
+                "label": ev["label"],
+                "score": ev["score"],
+                "explanation": ev.get("explanation", ""),
+            })
+    elif span_id:
+        # Fallback: post immediately if no deferred queue (shouldn't happen)
         for ev in evals.values():
             _post_annotation(
                 span_id=span_id,

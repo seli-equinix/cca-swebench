@@ -6,10 +6,17 @@ Routes traces to separate Phoenix projects:
 
 Every test creates spans visible in the Phoenix UI at
 http://192.168.4.204:6006/.
+
+Annotations are deferred until AFTER the span is closed and flushed to
+Phoenix. This avoids 404 errors caused by posting annotations for spans
+that haven't arrived at the server yet (BatchSpanProcessor buffers for
+5 seconds by default).
 """
 
 from __future__ import annotations
 
+import logging
+import time
 import uuid
 
 import pytest
@@ -20,6 +27,9 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
 from .cca_client import CCAClient
+from .evaluators import post_deferred_annotations
+
+log = logging.getLogger(__name__)
 
 # ==================== Configuration ====================
 
@@ -45,7 +55,7 @@ def pytest_configure(config):
 
 
 def _make_tracer(project_name: str) -> tuple:
-    """Create a TracerProvider + Tracer for a Phoenix project."""
+    """Create a (TracerProvider, Tracer) pair for a Phoenix project."""
     resource = Resource.create({
         "service.name": project_name,
         "openinference.project.name": project_name,
@@ -59,33 +69,29 @@ def _make_tracer(project_name: str) -> tuple:
 
 @pytest.fixture(scope="session")
 def user_tracer():
-    """Tracer that routes spans to the cca-user-tests project."""
+    """Provider + tracer routed to the cca-user-tests project."""
     provider, tracer = _make_tracer(PROJECT_USER)
-    yield tracer
+    yield provider, tracer
     provider.shutdown()
 
 
 @pytest.fixture(scope="session")
 def search_tracer():
-    """Tracer that routes spans to the cca-search-tests project."""
+    """Provider + tracer routed to the cca-search-tests project."""
     provider, tracer = _make_tracer(PROJECT_SEARCH)
-    yield tracer
+    yield provider, tracer
     provider.shutdown()
 
 
 @pytest.fixture(scope="session", autouse=True)
 def default_tracer(user_tracer):
-    """Set the global tracer provider to user_tracer as default.
-
-    Individual test modules override via the phoenix_tracer fixture.
-    """
-    # Don't set_tracer_provider globally — we use explicit tracers
+    """Ensure at least one tracer is active for the session."""
     yield user_tracer
 
 
 @pytest.fixture
 def phoenix_tracer(request, user_tracer, search_tracer):
-    """Pick the correct tracer based on test location.
+    """Pick the correct (provider, tracer) based on test location.
 
     Tests in tests/websearch/ → cca-search-tests project
     Everything else → cca-user-tests project
@@ -102,7 +108,12 @@ def trace_test(request, phoenix_tracer):
 
     Creates a root span like 'user::test_identify_new_user' so tests
     are easy to find and filter in the Phoenix UI.
+
+    Annotations are collected during the test via span._pending_annotations
+    and posted AFTER the span closes + flushes — fixing the 404 race.
     """
+    provider, tracer = phoenix_tracer
+
     test_path = request.node.nodeid
     if "/user/" in test_path:
         category = "user"
@@ -116,11 +127,14 @@ def trace_test(request, phoenix_tracer):
     test_name = request.node.name
     span_name = f"{category}::{test_name}"
 
-    with phoenix_tracer.start_as_current_span(span_name) as span:
+    with tracer.start_as_current_span(span_name) as span:
         span.set_attribute("openinference.span.kind", "CHAIN")
         span.set_attribute("cca.test.name", test_name)
         span.set_attribute("cca.test.category", category)
         span.set_attribute("cca.test.nodeid", test_path)
+
+        # Evaluators append annotation dicts here during the test
+        span._pending_annotations = []
 
         yield span
 
@@ -128,6 +142,13 @@ def trace_test(request, phoenix_tracer):
             rep = request.node.rep_call
             span.set_attribute("cca.test.passed", rep.passed)
             span.set_attribute("cca.test.outcome", rep.outcome)
+
+    # Span is now CLOSED — flush to Phoenix, then post annotations.
+    # force_flush() sends via gRPC; Phoenix needs a moment to persist
+    # to Postgres before the span is queryable for annotations.
+    provider.force_flush()
+    time.sleep(1)
+    post_deferred_annotations(span)
 
 
 @pytest.hookimpl(hookwrapper=True)
@@ -186,7 +207,8 @@ def cca(user_tracer):
     Session-scoped: one HTTP client for the entire test run.
     Uses user_tracer by default; individual methods accept tracer override.
     """
-    client = CCAClient(base_url=CCA_BASE_URL, tracer=user_tracer)
+    _provider, tracer = user_tracer
+    client = CCAClient(base_url=CCA_BASE_URL, tracer=tracer)
     yield client
     client.close()
 
