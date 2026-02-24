@@ -254,6 +254,7 @@ def _run_llm_classify(
             rails=rails,
             provide_explanation=True,
             verbose=False,
+            use_function_calling_if_available=False,
         )
         label = result_df["label"].iloc[0]
         explanation = result_df.get("explanation", pd.Series([""])).iloc[0] or ""
