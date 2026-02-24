@@ -15,14 +15,24 @@ Usage in server startup:
     init_tracing()
     ...
     shutdown_tracing()
+
+Span helpers:
+    from confucius.core.tracing import get_tracer, traced_span
+
+    tracer = get_tracer()
+    with traced_span(tracer, "cca.router", kind="LLM") as span:
+        span.set_attribute("cca.router.model", "functionary-8b")
+        ...
 """
 
 from __future__ import annotations
 
 import logging
 import os
-from typing import Optional
+from contextlib import contextmanager
+from typing import Any, Dict, Generator, Optional
 
+from opentelemetry import context as otel_context
 from opentelemetry import trace
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
@@ -37,6 +47,11 @@ _provider: Optional[TracerProvider] = None
 OPENINFERENCE_SPAN_KIND = "openinference.span.kind"
 INPUT_VALUE = "input.value"
 OUTPUT_VALUE = "output.value"
+LLM_MODEL_NAME = "llm.model_name"
+LLM_TOKEN_COUNT_PROMPT = "llm.token_count.prompt"
+LLM_TOKEN_COUNT_COMPLETION = "llm.token_count.completion"
+TOOL_NAME = "tool.name"
+TOOL_PARAMETERS = "tool.parameters"
 
 
 def init_tracing() -> Optional[trace.Tracer]:
@@ -105,3 +120,30 @@ def shutdown_tracing() -> None:
 def get_tracer(name: str = "cca-http") -> trace.Tracer:
     """Get a tracer instance. Safe to call even if tracing is not initialized."""
     return trace.get_tracer(name)
+
+
+def get_current_context() -> otel_context.Context:
+    """Capture the current OTel context for propagation to async tasks.
+
+    Usage:
+        ctx = get_current_context()
+        asyncio.create_task(_run_in_context(ctx, coro))
+
+    async def _run_in_context(ctx, coro):
+        token = otel_context.attach(ctx)
+        try:
+            await coro
+        finally:
+            otel_context.detach(token)
+    """
+    return otel_context.get_current()
+
+
+def attach_context(ctx: otel_context.Context) -> object:
+    """Attach a captured context (returns a token for detach)."""
+    return otel_context.attach(ctx)
+
+
+def detach_context(token: object) -> None:
+    """Detach a previously attached context."""
+    otel_context.detach(token)  # type: ignore[arg-type]

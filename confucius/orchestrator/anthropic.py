@@ -20,6 +20,7 @@ from ..core.chat_models.google.gemini import GeminiChat
 
 from ..core.llm_manager import LLMParams
 from ..core.memory import CfMessage
+from ..core.tracing import get_tracer, OPENINFERENCE_SPAN_KIND, INPUT_VALUE, OUTPUT_VALUE
 from .exceptions import OrchestratorInterruption
 from .extensions import ToolUseExtension, ToolUseObserver
 from .llm import LLMOrchestrator
@@ -114,9 +115,23 @@ class AnthropicLLMOrchestrator(LLMOrchestrator):
         messages: list[BaseMessage],
         context: AnalectRunContext,
     ) -> str:
-        response = await context.invoke(chat, messages)
-        response = await self.on_llm_response(response, context)
-        return await self._process_response(response, context)
+        tracer = get_tracer()
+        iteration = getattr(self, '_iteration_count', 0) + 1
+        object.__setattr__(self, '_iteration_count', iteration)
+
+        model_name = getattr(chat, 'model', 'unknown')
+        with tracer.start_as_current_span(f"cca.llm.invoke") as span:
+            span.set_attribute(OPENINFERENCE_SPAN_KIND, "LLM")
+            span.set_attribute("llm.model_name", str(model_name))
+            span.set_attribute("cca.llm.iteration", iteration)
+            span.set_attribute("cca.llm.message_count", len(messages))
+
+            response = await context.invoke(chat, messages)
+            response = await self.on_llm_response(response, context)
+            result = await self._process_response(response, context)
+
+            span.set_attribute(OUTPUT_VALUE, str(result)[:500] if result else "")
+            return result
 
     async def on_thinking(
         self, content: ant.MessageContentThinking, context: AnalectRunContext
@@ -303,39 +318,62 @@ class AnthropicLLMOrchestrator(LLMOrchestrator):
         all_tool_names: set[str],
         context: AnalectRunContext,
     ) -> ant.MessageContentToolResult | None:
-        context.memory_manager.add_messages(
-            [CfMessage(type=cf.MessageType.AI, content=[tool_use.dict()])]
-        )
+        tracer = get_tracer()
 
-        if tool_use.name not in all_tool_names:
-            tool_result = ant.MessageContentToolResult(
-                tool_use_id=tool_use.id,
-                content=f"Tool `{tool_use.name}` is not supported, please try another tool",
-                is_error=True,
-            )
-            context.memory_manager.add_messages(
-                [
-                    CfMessage(
-                        type=cf.MessageType.HUMAN,
-                        content=[tool_result.dict()],
-                    )
-                ]
-            )
-            return tool_result
-
-        final_tool_result = None
-        for ext in self._enabled_tool_use_extensions:
-            await ext.on_before_tool_use(tool_use=tool_use, context=context)
-            tool_result = await ext._on_tool_use(tool_use=tool_use, context=context)
-            if tool_result is None:
-                continue
+        with tracer.start_as_current_span(f"cca.tool.{tool_use.name}") as span:
+            span.set_attribute(OPENINFERENCE_SPAN_KIND, "TOOL")
+            span.set_attribute("tool.name", tool_use.name)
+            # Safely serialize tool input
+            try:
+                import json as _json
+                input_str = _json.dumps(tool_use.input, default=str)[:500] if tool_use.input else "{}"
+            except Exception:
+                input_str = str(tool_use.input)[:500]
+            span.set_attribute(INPUT_VALUE, input_str)
 
             context.memory_manager.add_messages(
-                [CfMessage(type=cf.MessageType.HUMAN, content=[tool_result.dict()])]
+                [CfMessage(type=cf.MessageType.AI, content=[tool_use.dict()])]
             )
-            await ext.on_after_tool_use_result(
-                tool_use=tool_use, tool_result=tool_result, context=context
-            )
-            final_tool_result = tool_result
 
-        return final_tool_result
+            if tool_use.name not in all_tool_names:
+                tool_result = ant.MessageContentToolResult(
+                    tool_use_id=tool_use.id,
+                    content=f"Tool `{tool_use.name}` is not supported, please try another tool",
+                    is_error=True,
+                )
+                context.memory_manager.add_messages(
+                    [
+                        CfMessage(
+                            type=cf.MessageType.HUMAN,
+                            content=[tool_result.dict()],
+                        )
+                    ]
+                )
+                span.set_attribute("tool.status", "unsupported")
+                span.set_attribute("tool.is_error", True)
+                return tool_result
+
+            final_tool_result = None
+            for ext in self._enabled_tool_use_extensions:
+                await ext.on_before_tool_use(tool_use=tool_use, context=context)
+                tool_result = await ext._on_tool_use(tool_use=tool_use, context=context)
+                if tool_result is None:
+                    continue
+
+                context.memory_manager.add_messages(
+                    [CfMessage(type=cf.MessageType.HUMAN, content=[tool_result.dict()])]
+                )
+                await ext.on_after_tool_use_result(
+                    tool_use=tool_use, tool_result=tool_result, context=context
+                )
+                final_tool_result = tool_result
+
+            # Record result in span
+            if final_tool_result is not None:
+                is_error = getattr(final_tool_result, "is_error", False)
+                span.set_attribute("tool.is_error", bool(is_error))
+                span.set_attribute("tool.status", "error" if is_error else "success")
+                result_content = getattr(final_tool_result, "content", "")
+                span.set_attribute(OUTPUT_VALUE, str(result_content)[:500])
+
+            return final_tool_result

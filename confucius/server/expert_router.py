@@ -32,6 +32,13 @@ from typing import Any, Dict, List, Optional
 import httpx
 
 from ..core.config import RouterConfig
+from ..core.tracing import (
+    get_tracer,
+    OPENINFERENCE_SPAN_KIND,
+    INPUT_VALUE,
+    OUTPUT_VALUE,
+    LLM_MODEL_NAME,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -360,82 +367,110 @@ async def classify_request(
         RouteDecision with the expert classification and extracted parameters.
         Falls back to config.fallback_entry on any error.
     """
-    start = time.monotonic()
-    client = await _get_client()
+    tracer = get_tracer()
 
-    # Build messages for classification
-    messages: List[Dict[str, str]] = [
-        {"role": "system", "content": ROUTER_SYSTEM_PROMPT},
-    ]
+    with tracer.start_as_current_span("cca.router") as span:
+        span.set_attribute(OPENINFERENCE_SPAN_KIND, "LLM")
+        span.set_attribute(INPUT_VALUE, user_message[:500])
+        span.set_attribute(LLM_MODEL_NAME, "functionary-small-v3.2")
+        span.set_attribute("cca.router.url", config.url)
 
-    # Add recent context if available (helps with follow-up routing)
-    if recent_messages:
-        for msg in recent_messages[-2:]:
-            messages.append(msg)
+        start = time.monotonic()
+        client = await _get_client()
 
-    messages.append({"role": "user", "content": user_message})
+        # Build messages for classification
+        messages: List[Dict[str, str]] = [
+            {"role": "system", "content": ROUTER_SYSTEM_PROMPT},
+        ]
 
-    payload = {
-        "model": "functionary",
-        "messages": messages,
-        "tools": ROUTING_TOOLS,
-        "tool_choice": "required",
-        "temperature": config.temperature,
-        "max_tokens": 512,
-    }
+        # Add recent context if available (helps with follow-up routing)
+        if recent_messages:
+            for msg in recent_messages[-2:]:
+                messages.append(msg)
 
-    try:
-        resp = await client.post(
-            f"{config.url}/v1/chat/completions",
-            json=payload,
-            timeout=config.timeout_ms / 1000.0,
+        messages.append({"role": "user", "content": user_message})
+
+        payload = {
+            "model": "functionary",
+            "messages": messages,
+            "tools": ROUTING_TOOLS,
+            "tool_choice": "required",
+            "temperature": config.temperature,
+            "max_tokens": 512,
+        }
+
+        try:
+            resp = await client.post(
+                f"{config.url}/v1/chat/completions",
+                json=payload,
+                timeout=config.timeout_ms / 1000.0,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        except httpx.TimeoutException:
+            elapsed = (time.monotonic() - start) * 1000
+            logger.warning(f"Router classification timed out ({elapsed:.0f}ms), using fallback")
+            span.set_attribute("cca.router.status", "timeout")
+            span.set_attribute("cca.router.elapsed_ms", elapsed)
+            return _fallback(config, elapsed, "timeout")
+        except Exception as e:
+            elapsed = (time.monotonic() - start) * 1000
+            logger.error(f"Router classification error: {e}")
+            span.set_attribute("cca.router.status", "error")
+            span.set_attribute("cca.router.error", str(e)[:200])
+            return _fallback(config, elapsed, str(e))
+
+        elapsed_ms = (time.monotonic() - start) * 1000
+
+        # Parse tool call from response
+        choices = data.get("choices", [])
+        if not choices:
+            span.set_attribute("cca.router.status", "empty_choices")
+            return _fallback(config, elapsed_ms, "empty choices")
+
+        message = choices[0].get("message", {})
+        tool_calls = message.get("tool_calls", [])
+
+        if not tool_calls:
+            # Model answered with text instead of tool call
+            content = message.get("content", "")
+            logger.warning(f"No tool call from router (text: {content[:80]}), using fallback")
+            span.set_attribute("cca.router.status", "no_tool_call")
+            span.set_attribute(OUTPUT_VALUE, content[:200])
+            return _fallback(config, elapsed_ms, "no tool call")
+
+        # Parse the first tool call
+        tc = tool_calls[0]
+        func_name = tc.get("function", {}).get("name", "")
+        func_args_str = tc.get("function", {}).get("arguments", "{}")
+
+        try:
+            func_args = json.loads(func_args_str)
+        except json.JSONDecodeError:
+            func_args = {}
+
+        # Map function name → RouteDecision
+        decision = _parse_tool_call(func_name, func_args, elapsed_ms)
+
+        # Record result in span
+        span.set_attribute("cca.router.status", "success")
+        span.set_attribute("cca.router.expert", decision.expert.value)
+        span.set_attribute("cca.router.function", func_name)
+        span.set_attribute("cca.router.elapsed_ms", elapsed_ms)
+        span.set_attribute(OUTPUT_VALUE, decision.task_summary[:200])
+
+        # Token usage if available
+        usage = data.get("usage", {})
+        if usage:
+            span.set_attribute("llm.token_count.prompt", usage.get("prompt_tokens", 0))
+            span.set_attribute("llm.token_count.completion", usage.get("completion_tokens", 0))
+
+        logger.info(
+            f"Route: {decision.expert.value} ({elapsed_ms:.0f}ms) "
+            f"| {decision.task_summary[:60]}"
         )
-        resp.raise_for_status()
-        data = resp.json()
-    except httpx.TimeoutException:
-        elapsed = (time.monotonic() - start) * 1000
-        logger.warning(f"Router classification timed out ({elapsed:.0f}ms), using fallback")
-        return _fallback(config, elapsed, "timeout")
-    except Exception as e:
-        elapsed = (time.monotonic() - start) * 1000
-        logger.error(f"Router classification error: {e}")
-        return _fallback(config, elapsed, str(e))
 
-    elapsed_ms = (time.monotonic() - start) * 1000
-
-    # Parse tool call from response
-    choices = data.get("choices", [])
-    if not choices:
-        return _fallback(config, elapsed_ms, "empty choices")
-
-    message = choices[0].get("message", {})
-    tool_calls = message.get("tool_calls", [])
-
-    if not tool_calls:
-        # Model answered with text instead of tool call
-        content = message.get("content", "")
-        logger.warning(f"No tool call from router (text: {content[:80]}), using fallback")
-        return _fallback(config, elapsed_ms, "no tool call")
-
-    # Parse the first tool call
-    tc = tool_calls[0]
-    func_name = tc.get("function", {}).get("name", "")
-    func_args_str = tc.get("function", {}).get("arguments", "{}")
-
-    try:
-        func_args = json.loads(func_args_str)
-    except json.JSONDecodeError:
-        func_args = {}
-
-    # Map function name → RouteDecision
-    decision = _parse_tool_call(func_name, func_args, elapsed_ms)
-
-    logger.info(
-        f"Route: {decision.expert.value} ({elapsed_ms:.0f}ms) "
-        f"| {decision.task_summary[:60]}"
-    )
-
-    return decision
+        return decision
 
 
 def _parse_tool_call(

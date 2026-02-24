@@ -23,6 +23,14 @@ import os
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+from ..core.tracing import (
+    get_tracer,
+    OPENINFERENCE_SPAN_KIND,
+    INPUT_VALUE,
+    OUTPUT_VALUE,
+    LLM_MODEL_NAME,
+)
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -207,39 +215,66 @@ class NoteObserver:
 
         This is fire-and-forget — all exceptions are caught and logged.
         """
-        try:
-            if not messages:
-                return
+        tracer = get_tracer()
 
-            # 1. Store raw trajectory to Redis
-            await self._store_trajectory_to_redis(messages, session_id)
+        with tracer.start_as_current_span("cca.note_observer") as span:
+            span.set_attribute(OPENINFERENCE_SPAN_KIND, "CHAIN")
+            span.set_attribute("cca.note.session_id", session_id)
+            span.set_attribute("cca.note.user_id", user_id or "anonymous")
+            span.set_attribute("cca.note.message_count", len(messages))
 
-            # 2. Extract notes via Spark1 Qwen3-8B
-            notes = await self._extract_notes(messages)
-            if not notes:
-                logger.debug(
-                    "NoteObserver: no notes extracted for session %s", session_id
+            try:
+                if not messages:
+                    span.set_attribute("cca.note.status", "empty")
+                    return
+
+                # 1. Store raw trajectory to Redis
+                with tracer.start_as_current_span("cca.note.store_trajectory") as redis_span:
+                    redis_span.set_attribute(OPENINFERENCE_SPAN_KIND, "CHAIN")
+                    await self._store_trajectory_to_redis(messages, session_id)
+                    redis_span.set_attribute("cca.note.status", "stored")
+
+                # 2. Extract notes via Spark1 Qwen3-8B
+                with tracer.start_as_current_span("cca.note.extract_llm") as llm_span:
+                    llm_span.set_attribute(OPENINFERENCE_SPAN_KIND, "LLM")
+                    llm_span.set_attribute(LLM_MODEL_NAME, self._llm_model)
+                    llm_span.set_attribute("cca.note.llm_url", self._llm_url)
+                    notes = await self._extract_notes(messages)
+                    llm_span.set_attribute("cca.note.notes_extracted", len(notes) if notes else 0)
+
+                if not notes:
+                    logger.debug(
+                        "NoteObserver: no notes extracted for session %s", session_id
+                    )
+                    span.set_attribute("cca.note.status", "no_notes")
+                    return
+
+                # 3. Store notes to Qdrant
+                with tracer.start_as_current_span("cca.note.store_qdrant") as qdrant_span:
+                    qdrant_span.set_attribute(OPENINFERENCE_SPAN_KIND, "CHAIN")
+                    qdrant_span.set_attribute("cca.note.notes_count", len(notes))
+                    await self._store_notes_to_qdrant(
+                        notes=notes,
+                        session_id=session_id,
+                        user_id=user_id,
+                        user_name=user_name,
+                        project_context=project_context,
+                    )
+                    qdrant_span.set_attribute("cca.note.status", "stored")
+
+                span.set_attribute("cca.note.status", "success")
+                span.set_attribute("cca.note.notes_stored", len(notes))
+                logger.info(
+                    "NoteObserver: stored %d notes for session %s (user=%s)",
+                    len(notes),
+                    session_id,
+                    user_id or "anonymous",
                 )
-                return
 
-            # 3. Store notes to Qdrant
-            await self._store_notes_to_qdrant(
-                notes=notes,
-                session_id=session_id,
-                user_id=user_id,
-                user_name=user_name,
-                project_context=project_context,
-            )
-
-            logger.info(
-                "NoteObserver: stored %d notes for session %s (user=%s)",
-                len(notes),
-                session_id,
-                user_id or "anonymous",
-            )
-
-        except Exception as e:
-            logger.error("NoteObserver.process() failed: %s", e, exc_info=True)
+            except Exception as e:
+                span.set_attribute("cca.note.status", "error")
+                span.set_attribute("cca.note.error", str(e)[:200])
+                logger.error("NoteObserver.process() failed: %s", e, exc_info=True)
 
     # ------------------------------------------------------------------
     # Redis trajectory storage

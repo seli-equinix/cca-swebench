@@ -35,6 +35,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from ..core.config import CCAConfigError, get_llm_params, get_router_config
 from ..core.tracing import (
     init_tracing, shutdown_tracing, get_tracer,
+    get_current_context, attach_context, detach_context,
     OPENINFERENCE_SPAN_KIND, INPUT_VALUE, OUTPUT_VALUE,
 )
 from ..core.entry.base import EntryInput
@@ -251,6 +252,30 @@ def extract_last_user_message(messages: List[Any]) -> str:
         if msg.role == "user" and msg.content:
             return msg.content
     return ""
+
+
+async def _run_note_observer_with_context(
+    ctx: Any,
+    observer: NoteObserver,
+    messages: List[Any],
+    session_id: str,
+    user: Any,
+) -> None:
+    """Run note observer with propagated OTel span context.
+
+    Without this, the background task would create orphaned spans
+    disconnected from the parent request trace.
+    """
+    token = attach_context(ctx)
+    try:
+        await observer.process(
+            messages=messages,
+            session_id=session_id,
+            user_id=user.user_id if user else None,
+            user_name=user.display_name if user else None,
+        )
+    finally:
+        detach_context(token)
 
 
 # ==================== Routes ====================
@@ -474,14 +499,13 @@ async def chat_completions(
                         )
                         span.set_attribute("cca.status", "success")
 
-                        # Fire note observer in background (non-blocking)
+                        # Fire note observer in background with span context
                         if note_observer:
                             trajectory = pool_entry.cf.memory_manager.get_session_memory().messages
-                            asyncio.create_task(note_observer.process(
-                                messages=list(trajectory),
-                                session_id=session_id,
-                                user_id=user.user_id if user else None,
-                                user_name=user.display_name if user else None,
+                            ctx = get_current_context()
+                            asyncio.create_task(_run_note_observer_with_context(
+                                ctx, note_observer, list(trajectory),
+                                session_id, user,
                             ))
                     except Exception as e:
                         span.set_attribute("cca.status", "error")
@@ -533,14 +557,13 @@ async def chat_completions(
                         },
                     )
 
-                # Fire note observer in background (non-blocking)
+                # Fire note observer in background with span context
                 if note_observer:
                     trajectory = pool_entry.cf.memory_manager.get_session_memory().messages
-                    asyncio.create_task(note_observer.process(
-                        messages=list(trajectory),
-                        session_id=session_id,
-                        user_id=user.user_id if user else None,
-                        user_name=user.display_name if user else None,
+                    ctx = get_current_context()
+                    asyncio.create_task(_run_note_observer_with_context(
+                        ctx, note_observer, list(trajectory),
+                        session_id, user,
                     ))
 
                 # Collect response from IO buffer
