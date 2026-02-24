@@ -11,10 +11,11 @@ determines which entry class and system prompt is used.
 
 Architecture:
     User message → classify_request() → Functionary → RouteDecision
-                                                        ├── "coder"     → HttpCodeAssistEntry
-                                                        ├── "infra"     → HttpInfraEntry
-                                                        ├── "search"    → HttpCodeAssistEntry + search hints
-                                                        ├── "planner"   → HttpCodeAssistEntry + planning hints
+                                                        ├── "coder"     → HttpRoutedEntry (file+shell+memory)
+                                                        ├── "infra"     → HttpRoutedEntry (shell+file+memory)
+                                                        ├── "search"    → HttpRoutedEntry (web+file+memory)
+                                                        ├── "planner"   → HttpRoutedEntry (memory only)
+                                                        ├── "user"      → HttpRoutedEntry (user tools only)
                                                         ├── "direct"    → Functionary answers (no agent loop)
                                                         └── "clarify"   → Ask user for more info
 """
@@ -44,6 +45,7 @@ class ExpertType(str, Enum):
     INFRASTRUCTURE = "infrastructure"
     SEARCH = "search"
     PLANNER = "planner"
+    USER = "user"            # User identity, profiles, facts, preferences
     DIRECT = "direct"        # Simple Q&A — Functionary answers directly
     CLARIFY = "clarify"      # Need more info from user
 
@@ -86,6 +88,8 @@ class RouteDecision:
             parts.append(f"Nodes: {', '.join(p['nodes_involved'])}")
         if p.get("search_scope"):
             parts.append(f"Scope: {p['search_scope']}")
+        if p.get("user_action"):
+            parts.append(f"Action: {p['user_action']}")
         return " | ".join(parts)
 
 
@@ -214,6 +218,39 @@ ROUTING_TOOLS: List[Dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "route_to_user",
+            "description": (
+                "Route to user management. Use for: user identification "
+                "('I'm Sean', 'my name is...'), viewing/updating/deleting "
+                "user profiles, storing personal facts ('remember I work at...'), "
+                "updating preferences, managing skills and aliases. "
+                "Use when the user's PRIMARY intent is about their identity "
+                "or profile — NOT when they introduce themselves while "
+                "asking a coding/infra question."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "task_summary": {
+                        "type": "string",
+                        "description": "User management task description"
+                    },
+                    "user_action": {
+                        "type": "string",
+                        "enum": [
+                            "identify", "view_profile", "update_profile",
+                            "manage_facts", "manage_preferences", "delete_profile",
+                        ],
+                        "description": "The primary user management action"
+                    },
+                },
+                "required": ["task_summary"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "answer_directly",
             "description": (
                 "Answer the question directly without an expert. Use ONLY for: "
@@ -268,12 +305,18 @@ Routing rules:
 - Docker, Swarm, servers, networking, deployments, monitoring → route_to_infrastructure
 - Searching codebases, docs, or the web (no code changes) → route_to_search
 - Architecture design, planning, task breakdown (no code changes) → route_to_planner
+- User identity, profiles, facts, preferences, skills/aliases → route_to_user
 - Simple greetings, factual questions, concept explanations → answer_directly
 - Ambiguous requests where you can't determine intent → request_clarification
 
-When in doubt between coder and infrastructure, consider: if the task mentions \
-Docker, containers, services, nodes, deployments, or servers → infrastructure. \
-If it mentions files, functions, classes, tests, bugs → coder.
+Disambiguation:
+- Coder vs infrastructure: Docker/containers/services/nodes → infrastructure; \
+files/functions/classes/tests/bugs → coder.
+- User vs coder: If user introduces themselves AND asks a coding question in the \
+same message, the coding task is primary → coder. If the message is ONLY about \
+their identity, profile, or stored data → user.
+- "Delete my profile", "what do you know about me?", "remember I work at X" → user.
+- "Hi I'm Sean, write me a Python script" → coder (coding is primary).
 
 ALWAYS call exactly one function. Never respond with plain text."""
 
@@ -407,6 +450,7 @@ def _parse_tool_call(
         "route_to_infrastructure": ExpertType.INFRASTRUCTURE,
         "route_to_search": ExpertType.SEARCH,
         "route_to_planner": ExpertType.PLANNER,
+        "route_to_user": ExpertType.USER,
         "answer_directly": ExpertType.DIRECT,
         "request_clarification": ExpertType.CLARIFY,
     }

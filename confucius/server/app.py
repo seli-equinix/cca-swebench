@@ -47,6 +47,7 @@ from .expert_router import (
 )
 from .http_entry import HttpCodeAssistEntry
 from .http_infra_entry import HttpInfraEntry
+from .http_routed_entry import HttpRoutedEntry
 from .io_adapter import HttpIOInterface
 from .models import (
     ChatCompletionRequest,
@@ -422,17 +423,18 @@ async def chat_completions(
             route = None
 
     # 8. Select entry based on routing decision
-    route_context = route.to_context_header() if route else ""
-
-    if route and route.expert == ExpertType.INFRASTRUCTURE:
-        entry = HttpInfraEntry(
+    #    HttpRoutedEntry dynamically builds extensions from the route's tool groups.
+    #    Each route only gets the tools it needs (USER=6, CODER=~10, INFRA=~10, etc.)
+    if route:
+        entry = HttpRoutedEntry(
+            route=route,
             user_context=user_context,
             user_extension=user_ext,
-            route_context=route_context,
         )
     else:
-        # Default: coder (also handles SEARCH, PLANNER for now)
-        entry = HttpCodeAssistEntry(
+        # No router or router disabled — default coder route
+        entry = HttpRoutedEntry(
+            route=RouteDecision(expert=ExpertType.CODER, task_summary="Default (no router)"),
             user_context=user_context,
             user_extension=user_ext,
         )
@@ -463,6 +465,9 @@ async def chat_completions(
                     span.set_attribute("cca.session_id", session_id)
                     span.set_attribute("cca.mode", "streaming")
                     span.set_attribute("cca.message", user_message[:200])
+                    if route:
+                        span.set_attribute("cca.route", route.expert.value)
+                        span.set_attribute("cca.route_summary", route.task_summary[:100])
                     try:
                         await pool_entry.cf.invoke_analect(
                             entry, EntryInput(question=user_message)
@@ -504,6 +509,9 @@ async def chat_completions(
                 span.set_attribute("cca.session_id", session_id)
                 span.set_attribute("cca.mode", "non-streaming")
                 span.set_attribute("cca.message", user_message[:200])
+                if route:
+                    span.set_attribute("cca.route", route.expert.value)
+                    span.set_attribute("cca.route_summary", route.task_summary[:100])
                 if user:
                     span.set_attribute("cca.user", user.display_name)
 

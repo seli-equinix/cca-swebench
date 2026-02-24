@@ -65,10 +65,12 @@ class HttpCodeAssistEntry(Analect[EntryInput, EntryOutput], EntryAnalectMixin):
         self,
         user_context: str = "",
         user_extension: Optional[Extension] = None,
+        route_context: str = "",
     ) -> None:
         super().__init__()
         self._user_context = user_context
         self._user_extension = user_extension
+        self._route_context = route_context
 
     @classmethod
     def display_name(cls) -> str:
@@ -91,6 +93,10 @@ class HttpCodeAssistEntry(Analect[EntryInput, EntryOutput], EntryAnalectMixin):
         # INJECT: User personalization context before the task definition
         if self._user_context:
             task_def = self._user_context + "\n\n" + task_def
+
+        # INJECT: Routing context (task summary from classifier)
+        if self._route_context:
+            task_def = task_def + "\n\n" + self._route_context
 
         # Build extensions (SAME list as CLI CodeAssistEntry)
         extensions: list[Extension] = [
