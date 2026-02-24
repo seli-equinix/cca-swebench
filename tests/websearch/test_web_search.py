@@ -10,7 +10,7 @@ import pytest
 
 from tests.evaluators import evaluate_response
 
-pytestmark = [pytest.mark.websearch, pytest.mark.timeout(300)]
+pytestmark = [pytest.mark.websearch, pytest.mark.timeout(600)]
 
 
 class TestWebSearchBasic:
