@@ -291,9 +291,32 @@ async def chat_completions(
     start_time = time.time()
     tracer = get_tracer()
 
+    # Wrap the ENTIRE request in a parent span so router, agent, and
+    # note observer all appear as children of a single trace.
+    with tracer.start_as_current_span("cca.request") as request_span:
+        request_span.set_attribute(OPENINFERENCE_SPAN_KIND, "CHAIN")
+
+        return await _handle_chat_completions(
+            request, x_session_id, http_request,
+            start_time, tracer, request_span,
+        )
+
+
+async def _handle_chat_completions(
+    request: ChatCompletionRequest,
+    x_session_id: Optional[str],
+    http_request: Request,
+    start_time: float,
+    tracer: Any,
+    request_span: Any,
+) -> Any:
+    """Inner handler for chat completions — runs inside cca.request span."""
+
     # 1. Derive session ID
     session_id = derive_session_id(request, x_session_id)
     logger.info(f"Request to session {session_id[:16]}...")
+    request_span.set_attribute("cca.session_id", session_id)
+    request_span.set_attribute(INPUT_VALUE, extract_last_user_message(request.messages)[:500])
 
     # 2. Detect client type from headers
     headers = dict(http_request.headers) if http_request else {}
@@ -408,6 +431,8 @@ async def chat_completions(
                 f"Router: {route.expert.value} | {route.task_summary[:80]} "
                 f"({route.classification_time_ms:.0f}ms)"
             )
+            request_span.set_attribute("cca.route", route.expert.value)
+            request_span.set_attribute("cca.route_summary", route.task_summary[:100])
 
             # Handle DIRECT answers (no agent loop needed)
             if route.is_direct_answer and route.direct_answer:
