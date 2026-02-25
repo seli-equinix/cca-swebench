@@ -32,6 +32,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from ..core.config import CCAConfigError, get_llm_params, get_router_config
+from opentelemetry.propagate import extract as otel_extract
+
 from ..core.tracing import (
     init_tracing, shutdown_tracing, get_tracer,
     get_current_context, attach_context, detach_context,
@@ -305,9 +307,18 @@ async def chat_completions(
     start_time = time.time()
     tracer = get_tracer()
 
+    # Extract W3C trace context from incoming headers (traceparent).
+    # If present, the cca.request span becomes a child of the caller's
+    # trace — so test traces and server traces unify in Phoenix.
+    incoming_ctx = None
+    if http_request and http_request.headers:
+        carrier = dict(http_request.headers)
+        incoming_ctx = otel_extract(carrier)
+
     # Wrap the ENTIRE request in a parent span so router, agent, and
     # note observer all appear as children of a single trace.
-    with tracer.start_as_current_span("cca.request") as request_span:
+    ctx_kwargs = {"context": incoming_ctx} if incoming_ctx else {}
+    with tracer.start_as_current_span("cca.request", **ctx_kwargs) as request_span:
         request_span.set_attribute(OPENINFERENCE_SPAN_KIND, "CHAIN")
 
         return await _handle_chat_completions(

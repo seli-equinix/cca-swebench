@@ -52,6 +52,10 @@ LLM_TOKEN_COUNT_PROMPT = "llm.token_count.prompt"
 LLM_TOKEN_COUNT_COMPLETION = "llm.token_count.completion"
 TOOL_NAME = "tool.name"
 TOOL_PARAMETERS = "tool.parameters"
+LLM_INPUT_MESSAGES = "llm.input_messages"
+LLM_OUTPUT_MESSAGES = "llm.output_messages"
+LLM_INVOCATION_PARAMS = "llm.invocation_parameters"
+LLM_TOOLS = "llm.tools"
 
 
 def init_tracing() -> Optional[trace.Tracer]:

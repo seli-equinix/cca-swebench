@@ -38,6 +38,10 @@ from ..core.tracing import (
     INPUT_VALUE,
     OUTPUT_VALUE,
     LLM_MODEL_NAME,
+    LLM_INPUT_MESSAGES,
+    LLM_OUTPUT_MESSAGES,
+    LLM_INVOCATION_PARAMS,
+    LLM_TOOLS,
 )
 
 logger = logging.getLogger(__name__)
@@ -485,6 +489,16 @@ async def classify_request(
             "max_tokens": 512,
         }
 
+        # Record full LLM request details in span for Phoenix visibility
+        span.set_attribute(LLM_INPUT_MESSAGES, json.dumps(messages))
+        span.set_attribute(LLM_INVOCATION_PARAMS, json.dumps({
+            "model": payload["model"],
+            "temperature": payload["temperature"],
+            "max_tokens": payload["max_tokens"],
+            "tool_choice": payload["tool_choice"],
+        }))
+        span.set_attribute(LLM_TOOLS, json.dumps(ROUTING_TOOLS))
+
         try:
             resp = await client.post(
                 f"{config.url}/v1/chat/completions",
@@ -507,6 +521,10 @@ async def classify_request(
             return _fallback(config, elapsed, str(e))
 
         elapsed_ms = (time.monotonic() - start) * 1000
+
+        # Record full LLM response in span
+        response_message = data.get("choices", [{}])[0].get("message", {})
+        span.set_attribute(LLM_OUTPUT_MESSAGES, json.dumps([response_message]))
 
         # Parse tool call from response
         choices = data.get("choices", [])

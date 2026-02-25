@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 from opentelemetry import trace
+from opentelemetry.propagate import inject as otel_inject
 
 # Timeout defaults (seconds)
 TIMEOUT_HEALTH = 10
@@ -212,11 +213,17 @@ class CCAClient:
             pool=30.0,
         )
 
+        # Build headers with W3C trace context propagation
+        # This injects traceparent so server spans become children
+        # of the test trace in Phoenix (unified trace view).
+        headers: Dict[str, str] = {"X-Session-Id": session_id}
+        otel_inject(headers)
+
         with self._client.stream(
             "POST",
             f"{self.base_url}/v1/chat/completions",
             json=payload,
-            headers={"X-Session-Id": session_id},
+            headers=headers,
             timeout=timeout,
         ) as resp:
             if resp.status_code != 200:

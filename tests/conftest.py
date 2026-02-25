@@ -76,7 +76,12 @@ def pytest_configure(config):
 
 @pytest.fixture(scope="session")
 def phoenix_provider():
-    """Single TracerProvider for all tests — one Phoenix project."""
+    """Single TracerProvider for all tests — one Phoenix project.
+
+    Also sets itself as the global TracerProvider so that W3C trace
+    context propagation (traceparent injection) works automatically
+    when the CCA test client makes HTTP requests.
+    """
     resource = Resource.create({
         "service.name": PROJECT_NAME,
         "openinference.project.name": PROJECT_NAME,
@@ -84,6 +89,8 @@ def phoenix_provider():
     provider = TracerProvider(resource=resource)
     exporter = OTLPSpanExporter(endpoint=PHOENIX_ENDPOINT, insecure=True)
     provider.add_span_processor(BatchSpanProcessor(exporter))
+    # Set as global so inject()/extract() use our test spans
+    trace.set_tracer_provider(provider)
     yield provider
     provider.shutdown()
 
