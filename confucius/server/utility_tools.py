@@ -188,7 +188,16 @@ class UtilityToolsExtension(ToolUseExtension):
     # ==================== Tool Handlers ====================
 
     async def _handle_web_search(self, inp: dict[str, Any]) -> str:
-        """Search via SearXNG with enhanced parameters."""
+        """Search via SearXNG with progressive fallback.
+
+        SearXNG's category-specific engines (it, science, etc.) often don't
+        support time_range filtering, returning 0 results silently. We handle
+        this with a retry cascade:
+          1. Original params
+          2. Drop time_range (most common failure cause)
+          3. Drop categories (fall back to general)
+          4. Simplified query (strip stopwords)
+        """
         query = inp.get("query", "").strip()
         if not query:
             return json.dumps({"error": "query is required"})
@@ -198,6 +207,10 @@ class UtilityToolsExtension(ToolUseExtension):
         time_range = inp.get("time_range")
         engines = inp.get("engines")
         language = inp.get("language", "en")
+
+        searxng_url = os.getenv(
+            "SEARXNG_URL", "http://192.168.4.205:8888"
+        )
 
         params: dict[str, Any] = {
             "q": query,
@@ -211,29 +224,26 @@ class UtilityToolsExtension(ToolUseExtension):
         if engines:
             params["engines"] = engines
 
-        searxng_url = os.getenv(
-            "SEARXNG_URL", "http://192.168.4.205:8888"
-        )
-
         try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                resp = await client.get(
-                    f"{searxng_url}/search", params=params
-                )
-                resp.raise_for_status()
+            results = await self._searxng_query(searxng_url, params, n_results)
 
-            results = resp.json().get("results", [])[:n_results]
+            # Retry 1: drop time_range (category engines often don't support it)
+            if not results and "time_range" in params:
+                retry_params = {k: v for k, v in params.items() if k != "time_range"}
+                results = await self._searxng_query(searxng_url, retry_params, n_results)
 
-            # Auto-retry with simplified query if 0 results
+            # Retry 2: drop categories (fall back to general search)
+            if not results and "categories" in params:
+                retry_params = {k: v for k, v in params.items()
+                                if k not in ("categories", "time_range")}
+                results = await self._searxng_query(searxng_url, retry_params, n_results)
+
+            # Retry 3: simplified query
             if not results:
                 simplified = _simplify_query(query)
                 if simplified and simplified != query:
-                    params["q"] = simplified
-                    async with httpx.AsyncClient(timeout=15.0) as client:
-                        resp = await client.get(
-                            f"{searxng_url}/search", params=params
-                        )
-                    results = resp.json().get("results", [])[:n_results]
+                    simple_params = {"q": simplified, "format": "json", "language": language}
+                    results = await self._searxng_query(searxng_url, simple_params, n_results)
 
         except httpx.HTTPError as e:
             return json.dumps({
@@ -264,6 +274,15 @@ class UtilityToolsExtension(ToolUseExtension):
                 "Try simpler keywords or different categories."
             ),
         })
+
+    async def _searxng_query(
+        self, searxng_url: str, params: dict[str, Any], n_results: int,
+    ) -> list[dict[str, Any]]:
+        """Execute a single SearXNG query and return results."""
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(f"{searxng_url}/search", params=params)
+            resp.raise_for_status()
+        return resp.json().get("results", [])[:n_results]
 
     async def _handle_fetch_url(self, inp: dict[str, Any]) -> str:
         """Fetch URL content with SSRF protection."""
