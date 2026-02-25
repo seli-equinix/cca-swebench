@@ -66,14 +66,16 @@ def main():
                 text=True
             )
             if result.returncode != 0:
-                print(f"Error generating {lang_name}:")
-                print(result.stderr)
-                raise Exception(f"Failed to generate parser for {lang_name}")
+                print(f"Warning: Failed to generate {lang_name} parser:")
+                print(f"  {result.stderr.strip()}")
+                print(f"  Skipping {lang_name} — AST parsing will fall back to regex")
+                continue
             print(f"  Generated parser for {lang_name}")
 
         # Verify parser.c exists
         if not os.path.exists(parser_c):
-            raise Exception(f"{lang_name}: parser.c not found at {parser_c}")
+            print(f"Warning: {lang_name}: parser.c not found, skipping")
+            continue
 
         repo_paths.append(repo_path)
         print(f"  {lang_name}: {version_tag}")
