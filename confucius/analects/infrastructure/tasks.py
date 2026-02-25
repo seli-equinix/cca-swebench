@@ -12,6 +12,7 @@ and standalone AI inference nodes.
 Environment
 - Current time: {current_time}
 - You have direct CLI access to the local node and can SSH to remote nodes.
+- You have `web_search` and `fetch_url_content` tools — use them for current docs, APIs, or any real-world information.
 
 ## Cluster Overview
 
@@ -31,10 +32,9 @@ Environment
 | Spark2 | 192.168.4.208 | vLLM (Qwen3-80B), GPU inference      |
 
 ### Key Services
-- **Traefik**: Reverse proxy on Swarm (*.locallan.com)
+- **Roxy-WI + HAProxy**: Reverse proxy on node5
 - **Portainer**: Container management
 - **Registry**: registry.locallan.com (Docker registry with Redis cache)
-- **Monitoring**: Prometheus, Grafana, Loki, Promtail, Node Exporter, cAdvisor
 - **Nextcloud**: File sync with MariaDB
 - **GlusterFS**: Shared storage across Swarm nodes (/mnt/glusterfs/)
 
@@ -58,6 +58,12 @@ sshpass -p 'Loveme-sex64' ssh -o StrictHostKeyChecking=no seli@<IP> "command"
 - Two Redis instances exist: Spark1:6379 (MCP memory) vs Swarm Redis (registry cache)
 - GPU workloads go to node5 (has nvidia runtime)
 - Always `git push` before deploy (GitOps: Portainer polls GitHub)
+
+## Planning
+- For complex tasks involving multiple nodes or services, plan your approach before making changes. Use `write_memory` to create a todo/plan and track progress as you work.
+- Break down the task into steps: which nodes, which services, what commands, what verification.
+- Update your plan as you go — check off completed steps and document any issues.
+- For simple single-service checks or restarts, proceed directly.
 
 ## Deliverables
 - Summary of what was changed and why

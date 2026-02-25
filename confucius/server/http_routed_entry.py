@@ -34,7 +34,7 @@ from ..orchestrator.anthropic import AnthropicLLMOrchestrator
 from ..orchestrator.extensions import Extension
 from ..orchestrator.types import OrchestratorInput
 
-from ..analects.code.tasks import get_task_definition
+from ..analects.code.tasks import get_task_definition, get_search_task_definition
 from ..analects.infrastructure.tasks import get_infra_task_definition
 from .expert_router import ExpertType, RouteDecision
 from .tool_groups import (
@@ -79,7 +79,7 @@ _ROUTE_TASK_DEFS = {
     ExpertType.USER: get_user_task_definition,
     ExpertType.CODER: get_task_definition,
     ExpertType.INFRASTRUCTURE: get_infra_task_definition,
-    ExpertType.SEARCH: get_task_definition,       # reuse coder for now
+    ExpertType.SEARCH: get_search_task_definition,  # dedicated search prompt
     ExpertType.PLANNER: get_task_definition,      # reuse coder for now
 }
 
