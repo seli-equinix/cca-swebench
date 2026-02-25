@@ -5,7 +5,7 @@
 
 Extracted from MCP server mcp_server.py (lines 6420-6578).
 Builds personalization text that gets injected into the agent's
-system prompt (task_def) via HttpCodeAssistEntry / HttpRoutedEntry.
+system prompt (task_def) via HttpRoutedEntry.
 
 Also provides the USER-route task definition — the focused system
 prompt used when the Functionary router classifies a request as

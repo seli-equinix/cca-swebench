@@ -60,12 +60,12 @@ CLI Mode (confucius code)               HTTP Mode (confucius serve --port 8500)
     -> CodeAssistEntry (Analect)             -> SessionPool -> Confucius instances
       -> AnthropicLLMOrchestrator              -> UserSessionManager (Redis + Qdrant)
         -> Extensions (tools)                  -> Expert Router (Functionary on node5:8001)
-        -> AutoLLMManager -> LLM                 -> classify_request() → RouteDecision
-                                                 -> HttpCodeAssistEntry (coding)
-                                                 -> HttpInfraEntry (infrastructure)
+        -> AutoLLMManager -> LLM                 -> classify_request() → RouteDecision + user extraction
+                                                 -> HttpRoutedEntry (all routes)
+                                                 -> tool_groups.py builds extensions per route
                                                  -> Direct answer / Clarification (no agent loop)
                                                    -> AnthropicLLMOrchestrator (SAME engine)
-                                                   -> All extensions (SAME) + UserToolsExtension
+                                                   -> Route-specific extensions + UserMemoryExtension
                                                    -> AutoLLMManager -> LLM (SAME)
 ```
 
@@ -208,15 +208,16 @@ confucius/server/
 ├── session_pool.py          # Concurrent Confucius instance management (per-session locks)
 ├── streaming.py             # SSE formatting with 8s keepalive
 ├── expert_router.py         # Functionary-based request classifier → RouteDecision
-├── http_entry.py            # HttpCodeAssistEntry — coding agent with user context
-├── http_infra_entry.py      # HttpInfraEntry — infrastructure agent (Docker, SSH, etc.)
+├── http_routed_entry.py     # HttpRoutedEntry — unified entry for all routes
+├── tool_groups.py           # ToolGroup enum, ROUTE_TOOL_GROUPS, build_extensions_for_route()
 ├── utility_tools.py         # UtilityToolsExtension (web_search, fetch_url_content)
 └── user/
     ├── __init__.py
     ├── session_manager.py   # UserSessionManager (Redis + Qdrant), profiles, identification
     ├── critical_facts.py    # CriticalFactsExtractor (auto-extract IPs, passwords, keys)
     ├── user_context.py      # Build personalization text for system prompt injection
-    └── tools_extension.py   # UserToolsExtension (5 LLM-callable tools, CCA native)
+    ├── tools_extension.py   # UserToolsExtension (6 LLM-callable tools, USER route)
+    └── memory_extension.py  # UserMemoryExtension (3 tools, non-USER routes)
 ```
 
 ### Infrastructure Analect
@@ -230,10 +231,10 @@ confucius/analects/infrastructure/
 
 ### Key Integration Points
 
-**HttpCodeAssistEntry** (`http_entry.py`): Extends `CodeAssistEntry` pattern to:
-1. Prepend user personalization context to the system prompt (`task_def`)
-2. Append `UserToolsExtension` to the extensions list
-3. Everything else (orchestrator, all other extensions, LLM) stays **identical** to CLI mode
+**HttpRoutedEntry** (`http_routed_entry.py`): Unified entry for all routed requests:
+1. Receives `ExpertType` from the router and builds extensions dynamically via `tool_groups.py`
+2. Prepends user personalization context to the system prompt (`task_def`)
+3. Each route gets only the tools it needs (CODER gets file/shell/memory/web/user_memory, USER gets full user tools, etc.)
 
 **HttpIOInterface** (`io_adapter.py`): Implements CCA's `IOInterface` ABC:
 - `ai()` → tagged as "assistant" output
@@ -264,23 +265,25 @@ Incoming HTTP requests are classified by a small Functionary model (8B, Q4_0) ru
 
 ### Expert Types
 
-| Expert | Entry Class | Description |
+| Expert | Tool Groups | Description |
 |--------|-------------|-------------|
-| `coder` | `HttpCodeAssistEntry` | Code editing, debugging, git, file operations |
-| `infrastructure` | `HttpInfraEntry` | Docker, SSH, Swarm, monitoring, deployments |
-| `search` | `HttpCodeAssistEntry` | (Future) Dedicated search expert |
-| `planner` | `HttpCodeAssistEntry` | (Future) Multi-step planning expert |
+| `coder` | PLANNER, FILE, SHELL, MEMORY, WEB, USER_MEMORY | Code editing, debugging, git, file operations |
+| `infrastructure` | PLANNER, FILE, SHELL, MEMORY, WEB, USER_MEMORY | Docker, SSH, Swarm, deployments |
+| `search` | WEB, FILE, MEMORY, USER_MEMORY | Web search, file search |
+| `planner` | PLANNER, MEMORY | Multi-step planning |
+| `user` | USER (full 6-tool UserToolsExtension) | User profile management |
 | `direct` | *(no agent loop)* | Simple Q&A answered by Functionary directly |
 | `clarify` | *(no agent loop)* | Ambiguous request — asks user for more info |
 
 ### How Routing Works
 
 1. User message arrives at `/v1/chat/completions`
-2. `classify_request()` sends message to Functionary with 6 routing tools
-3. Functionary calls one tool (e.g., `route_to_infrastructure`) with parameters
-4. `RouteDecision` is built from the tool call response
-5. If `DIRECT` or `CLARIFY` → return immediately (no agent loop)
-6. Otherwise → select entry class based on expert type, inject `route.to_context_header()` into system prompt
+2. `classify_request()` sends message to Functionary with 7 routing tools
+3. Functionary calls one tool (e.g., `route_to_infrastructure`) with parameters + user extraction
+4. `RouteDecision` is built from the tool call response (includes `detected_user_name`, `detected_user_facts`)
+5. Server-side user identification from router extraction (fallback to regex)
+6. If `DIRECT` or `CLARIFY` → return immediately (no agent loop)
+7. Otherwise → `HttpRoutedEntry` builds extensions from `ROUTE_TOOL_GROUPS[expert]` via `tool_groups.py`
 
 ### Config (config.toml)
 
@@ -313,15 +316,15 @@ curl -X POST http://192.168.4.205:8500/route/test \
 # Expected: {"expert": "coder", "task_summary": "...", ...}
 ```
 
-### HttpInfraEntry vs HttpCodeAssistEntry
+### Route Differences (via tool_groups.py)
 
-| Feature | HttpCodeAssistEntry | HttpInfraEntry |
-|---------|--------------------|--------------------|
-| System prompt | Code-focused task definition | Cluster topology, SSH access, services |
-| Allowed commands | Conservative (git, python, grep) | Expanded (docker, ssh, systemctl, sshpass) |
-| Extensions | + CodeReviewer, TestGenerator | No code review/test gen (not relevant) |
-| Max iterations | 20 | 30 (infra tasks need more steps) |
-| Max output lines | 300 | 500 (infra output is verbose) |
+| Feature | CODER | INFRASTRUCTURE | SEARCH |
+|---------|-------|----------------|--------|
+| System prompt | Code-focused task definition | Cluster topology, SSH access, services | Search-focused |
+| Allowed commands | Conservative (git, python, grep) | Expanded (docker, ssh, systemctl, sshpass) | Code commands |
+| Max iterations | 20 | 30 (infra tasks need more steps) | 15 |
+| Shell max output | 300 | 500 (infra output is verbose) | N/A |
+| User tools | UserMemoryExtension (3 tools) | UserMemoryExtension (3 tools) | UserMemoryExtension (3 tools) |
 
 ---
 

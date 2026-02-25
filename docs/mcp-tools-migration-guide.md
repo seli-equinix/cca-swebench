@@ -1,6 +1,6 @@
 # MCP Server Tools — Complete Migration Guide to CCA
 
-**Date**: 2026-02-22
+**Date**: 2026-02-23 (updated)
 **Purpose**: Comprehensive reference for migrating every MCP server tool into CCA's native extension system
 **Source**: `nvidia-dgx-spark/mcp-server/mcp_server.py` (10,650 lines), `mcp_tools.py` (1,159 lines)
 
@@ -10,7 +10,12 @@
 
 | Metric | Value |
 |--------|-------|
-| Total tools | 38 (33 LLM-callable + 5 MCP-protocol-only) |
+| Total MCP tools | 38 (33 LLM-callable + 5 MCP-protocol-only) |
+| **Ported to CCA** | **8** (user tools + web tools) |
+| **Covered by CCA built-ins** | **8** (file ops + shell) |
+| **CCA-only tools (new)** | **4** (note-taker system) |
+| **Remaining to port** | **16** (2 easy + 6 medium + 4 hard + 4 low-priority) |
+| **Skipped** | **8** (5 MCP-only + 3 not needed) |
 | Tool definitions | `mcp_server.py` lines 351–1213 (`AVAILABLE_TOOLS` list) |
 | Tool dispatch | `mcp_server.py` lines 1415–3100 (`execute_tool()` function) |
 | MCP-only tools | `mcp_tools.py` lines 121–1046 (`MCPToolsManager` class) |
@@ -32,7 +37,11 @@ class MyToolsExtension(ToolUseExtension):
             return ant.MessageContentToolResult(tool_use_id=tool_use.id, content=json.dumps(result))
 ```
 
-Reference implementation: [tools_extension.py](../confucius/server/user/tools_extension.py) (5 user tools already ported)
+Reference implementations:
+- [tools_extension.py](../confucius/server/user/tools_extension.py) (6 user tools)
+- [memory_extension.py](../confucius/server/user/memory_extension.py) (3 lightweight user memory tools for non-USER routes)
+- [utility_tools.py](../confucius/server/utility_tools.py) (2 web tools: web_search, fetch_url_content)
+- [note_writer.py](../confucius/orchestrator/extensions/note_writer.py) (4 note-taker tools)
 
 ---
 
@@ -83,7 +92,7 @@ resp = await client.get(f"{SEARXNG_URL}/search", params=params, timeout=15.0)
 ```
 
 **Backend**: SearXNG at `192.168.4.205:8888`
-**Migration notes**: Pure HTTP call — no state, no dependencies on other MCP modules. Easy standalone port.
+**Status**: **ALREADY PORTED** to CCA in `utility_tools.py` (UtilityToolsExtension)
 
 ---
 
@@ -160,7 +169,7 @@ resp = await client.get(url, follow_redirects=True, timeout=timeout)
 
 **Backend**: httpx.AsyncClient (shared connection pool)
 **Security**: SSRF protection (IP filtering), 50KB content cap
-**Migration notes**: Standalone HTTP utility. Need `httpx` + `beautifulsoup4`.
+**Status**: **ALREADY PORTED** to CCA in `utility_tools.py` (UtilityToolsExtension)
 
 ---
 
@@ -289,7 +298,7 @@ context = await session_manager.build_user_context(session)
 - `remove_skill`: Removes from user.skills
 
 **Backend**: Qdrant user_profiles
-**Migration notes**: Not yet ported. Extends the simpler remember_user_fact/update_user_preference tools.
+**Status**: **ALREADY PORTED** to CCA in `tools_extension.py` (UserToolsExtension)
 
 ---
 
@@ -959,12 +968,16 @@ Additional services:
 
 ## Migration Priority Recommendation
 
-### Already Ported (5 tools)
-- `identify_user` — in `tools_extension.py`
-- `infer_user` — in `tools_extension.py`
-- `remember_user_fact` — in `tools_extension.py`
-- `update_user_preference` — in `tools_extension.py`
-- `get_user_context` — in `tools_extension.py`
+### Already Ported (8 tools)
+Custom CCA extensions with full implementations:
+- `identify_user` — in `tools_extension.py` (UserToolsExtension)
+- `infer_user` — in `tools_extension.py` (UserToolsExtension)
+- `remember_user_fact` — in `tools_extension.py` (UserToolsExtension)
+- `update_user_preference` — in `tools_extension.py` (UserToolsExtension)
+- `get_user_context` — in `tools_extension.py` (UserToolsExtension)
+- `manage_user_profile` — in `tools_extension.py` (UserToolsExtension)
+- `web_search` — in `utility_tools.py` (UtilityToolsExtension)
+- `fetch_url_content` — in `utility_tools.py` (UtilityToolsExtension)
 
 ### Already Covered by CCA Extensions (8 tools)
 CCA's built-in extensions handle these — no migration needed:
@@ -977,13 +990,28 @@ CCA's built-in extensions handle these — no migration needed:
 - `execute_command` → `CommandLineExtension`
 - `list_directory` → `CommandLineExtension` (via `ls`)
 
-### Priority 1 — High Value, Low Effort (5 tools)
+### New CCA-Only Tools (4 tools — not from MCP)
+Tools that exist only in CCA, not migrated from MCP:
+- `store_note` — in `note_writer.py` (NoteWriterExtension) — save insights to Qdrant cca_notes
+- `search_notes` — in `note_writer.py` (NoteWriterExtension) — semantic search past notes
+- `get_trajectory` — in `note_writer.py` (NoteWriterExtension) — retrieve session trajectory from Redis
+- `list_recent_sessions` — in `note_writer.py` (NoteWriterExtension) — list recent sessions with notes
+
+### CCA Infrastructure (no tool migration — routing & orchestration)
+New CCA-specific systems that don't map to MCP tools:
+- **Dynamic routing**: ExpertRouter (Functionary 8B) classifies requests → 5 expert routes
+- **Tool groups**: `tool_groups.py` maps routes → extension sets (only relevant tools per request)
+- **Complexity scaling**: `estimated_steps` field drives dynamic iteration limits + expert enablement
+- **CodeReviewerExtension**: Auto-fires after file edits on complex tasks (estimated_steps >= 8)
+- **TestGeneratorExtension**: Auto-fires after file creation on complex CODER tasks
+- **UserMemoryExtension**: Lightweight 3-tool subset (get_context, remember_fact, update_pref) for non-USER routes
+- **NoteObserver**: Background note extraction after every request (not an LLM-callable tool)
+- **LLMCodingArchitectExtension**: Planning extension for complex tasks (prompt-based, no tools)
+
+### Priority 1 — High Value, Low Effort (2 tools)
 Pure HTTP calls, no complex state:
-- `web_search` — SearXNG HTTP call (~50 lines)
-- `fetch_url_content` — httpx + BeautifulSoup (~80 lines)
 - `view_diff` — git subprocess (~60 lines)
 - `analyze_image` — Vision server HTTP call (~30 lines)
-- `manage_user_profile` — extends existing user tools (~40 lines)
 
 ### Priority 2 — High Value, Medium Effort (6 tools)
 Require Qdrant/Memgraph client setup:
@@ -994,7 +1022,7 @@ Require Qdrant/Memgraph client setup:
 - `analyze_dependencies` — Memgraph multi-query (~60 lines)
 - `search_codebase` — Qdrant codebase search (~50 lines)
 
-### Priority 3 — Medium Value, Higher Effort (6 tools)
+### Priority 3 — Medium Value, Higher Effort (4 tools)
 Require full subsystem ports:
 - `upload_document` — needs document processor pipeline
 - `search_documents` — needs ephemeral doc storage
@@ -1036,4 +1064,11 @@ Not needed in CCA (handled by FileEditExtension):
 | Session manager | `nvidia-dgx-spark/mcp-server/session_manager.py` | 1–2423 | User identification |
 | Memory manager | `nvidia-dgx-spark/mcp-server/memory_manager.py` | 1–1143 | Memory tiers + CriticalFacts |
 | Knowledge search | `nvidia-dgx-spark/mcp-server/knowledge_search.py` | 1–598 | Unified search |
-| CCA user tools | `nvidia-dgx-spark/cca/confucius/server/user/tools_extension.py` | — | 5 tools already ported |
+| CCA user tools | `nvidia-dgx-spark/cca/confucius/server/user/tools_extension.py` | — | 6 tools (identify, infer, remember, update_pref, get_context, manage_profile) |
+| CCA user memory | `nvidia-dgx-spark/cca/confucius/server/user/memory_extension.py` | — | 3 lightweight tools for non-USER routes |
+| CCA web tools | `nvidia-dgx-spark/cca/confucius/server/utility_tools.py` | — | 2 tools (web_search, fetch_url_content) |
+| CCA note-taker | `nvidia-dgx-spark/cca/confucius/orchestrator/extensions/note_writer.py` | — | 4 tools (store_note, search_notes, get_trajectory, list_recent) |
+| CCA note observer | `nvidia-dgx-spark/cca/confucius/server/note_observer.py` | — | Background note extraction (not LLM-callable) |
+| CCA tool groups | `nvidia-dgx-spark/cca/confucius/server/tool_groups.py` | — | Route → extension mapping, dynamic iterations |
+| CCA expert router | `nvidia-dgx-spark/cca/confucius/server/expert_router.py` | — | Functionary 8B routing, estimated_steps |
+| CCA routed entry | `nvidia-dgx-spark/cca/confucius/server/http_routed_entry.py` | — | Unified entry, complexity guidance |

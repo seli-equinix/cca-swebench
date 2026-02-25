@@ -26,7 +26,6 @@ from ...orchestrator.extensions.solo import SoloModeExtension
 from ...orchestrator.types import OrchestratorInput
 from .commands import get_allowed_commands
 from ...core.config import get_llm_params
-from .reminders import TodoReminder
 from .tasks import get_task_definition
 
 
