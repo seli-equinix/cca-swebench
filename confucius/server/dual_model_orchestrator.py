@@ -113,10 +113,13 @@ class DualModelOrchestrator(AnthropicLLMOrchestrator):
             params.max_tokens = fast.max_tokens
         if fast.initial_max_tokens is not None:
             params.initial_max_tokens = fast.initial_max_tokens
-        # Merge additional_kwargs: keeps "tools" from super, adds "base_url"
+        # Merge additional_kwargs: keeps "tools" from super, adds "base_url".
+        # CRITICAL: copy the dict first — AnthropicLLMOrchestrator.get_llm_params()
+        # does a shallow .copy() of LLMParams, so additional_kwargs is a shared
+        # reference to self.llm_params[0]'s dict. Mutating in-place would
+        # permanently contaminate the 80B's base_url with the 8B's endpoint.
         if fast.additional_kwargs:
-            if params.additional_kwargs is None:
-                params.additional_kwargs = {}
+            params.additional_kwargs = dict(params.additional_kwargs or {})
             params.additional_kwargs.update(fast.additional_kwargs)
         return params
 
