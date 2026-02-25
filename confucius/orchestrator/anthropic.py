@@ -20,7 +20,7 @@ from ..core.chat_models.google.gemini import GeminiChat
 
 from ..core.llm_manager import LLMParams
 from ..core.memory import CfMessage
-from ..core.tracing import get_tracer, OPENINFERENCE_SPAN_KIND, INPUT_VALUE, OUTPUT_VALUE
+from ..core.tracing import get_tracer, OPENINFERENCE_SPAN_KIND, INPUT_VALUE, OUTPUT_VALUE, TOOL_NAME, TOOL_PARAMETERS
 from .exceptions import OrchestratorInterruption
 from .extensions import ToolUseExtension, ToolUseObserver
 from .llm import LLMOrchestrator
@@ -322,14 +322,15 @@ class AnthropicLLMOrchestrator(LLMOrchestrator):
 
         with tracer.start_as_current_span(f"cca.tool.{tool_use.name}") as span:
             span.set_attribute(OPENINFERENCE_SPAN_KIND, "TOOL")
-            span.set_attribute("tool.name", tool_use.name)
-            # Safely serialize tool input
+            span.set_attribute(TOOL_NAME, tool_use.name)
+            # Safely serialize tool input as both input.value and tool.parameters
             try:
                 import json as _json
-                input_str = _json.dumps(tool_use.input, default=str)[:500] if tool_use.input else "{}"
+                input_str = _json.dumps(tool_use.input, default=str) if tool_use.input else "{}"
             except Exception:
-                input_str = str(tool_use.input)[:500]
+                input_str = str(tool_use.input)
             span.set_attribute(INPUT_VALUE, input_str)
+            span.set_attribute(TOOL_PARAMETERS, input_str)
 
             context.memory_manager.add_messages(
                 [CfMessage(type=cf.MessageType.AI, content=[tool_use.dict()])]
@@ -374,6 +375,6 @@ class AnthropicLLMOrchestrator(LLMOrchestrator):
                 span.set_attribute("tool.is_error", bool(is_error))
                 span.set_attribute("tool.status", "error" if is_error else "success")
                 result_content = getattr(final_tool_result, "content", "")
-                span.set_attribute(OUTPUT_VALUE, str(result_content)[:500])
+                span.set_attribute(OUTPUT_VALUE, str(result_content)[:4000])
 
             return final_tool_result
