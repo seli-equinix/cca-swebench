@@ -505,17 +505,17 @@ async def classify_request(
         if _HAS_OPENINFERENCE:
             try:
                 oi_msgs = [Message(role=m["role"], content=m["content"]) for m in messages]
-                for k, v in get_llm_input_message_attributes(oi_msgs):
+                for k, v in get_llm_input_message_attributes(oi_msgs).items():
                     span.set_attribute(k, v)
                 for k, v in get_llm_invocation_parameter_attributes({
                     "model": payload["model"],
                     "temperature": payload["temperature"],
                     "max_tokens": payload["max_tokens"],
                     "tool_choice": payload["tool_choice"],
-                }):
+                }).items():
                     span.set_attribute(k, v)
                 oi_tools = [Tool(json_schema=t) for t in ROUTING_TOOLS]
-                for k, v in get_llm_tool_attributes(oi_tools):
+                for k, v in get_llm_tool_attributes(oi_tools).items():
                     span.set_attribute(k, v)
             except Exception as e:
                 logger.debug(f"Failed to set OpenInference input attrs: {e}")
@@ -561,7 +561,7 @@ async def classify_request(
                     content=resp_msg.get("content"),
                     tool_calls=oi_tool_calls or None,
                 )]
-                for k, v in get_llm_output_message_attributes(oi_out):
+                for k, v in get_llm_output_message_attributes(oi_out).items():
                     span.set_attribute(k, v)
             except Exception as e:
                 logger.debug(f"Failed to set OpenInference output attrs: {e}")
