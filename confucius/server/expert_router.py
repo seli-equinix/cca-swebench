@@ -505,20 +505,27 @@ async def classify_request(
         if _HAS_OPENINFERENCE:
             try:
                 oi_msgs = [Message(role=m["role"], content=m["content"]) for m in messages]
-                for k, v in get_llm_input_message_attributes(oi_msgs).items():
+                input_attrs = get_llm_input_message_attributes(oi_msgs)
+                for k, v in input_attrs.items():
                     span.set_attribute(k, v)
-                for k, v in get_llm_invocation_parameter_attributes({
+                inv_attrs = get_llm_invocation_parameter_attributes({
                     "model": payload["model"],
                     "temperature": payload["temperature"],
                     "max_tokens": payload["max_tokens"],
                     "tool_choice": payload["tool_choice"],
-                }).items():
+                })
+                for k, v in inv_attrs.items():
                     span.set_attribute(k, v)
                 oi_tools = [Tool(json_schema=t) for t in ROUTING_TOOLS]
-                for k, v in get_llm_tool_attributes(oi_tools).items():
+                tool_attrs = get_llm_tool_attributes(oi_tools)
+                for k, v in tool_attrs.items():
                     span.set_attribute(k, v)
+                logger.info(
+                    f"Router span enriched: {len(input_attrs)} input + "
+                    f"{len(inv_attrs)} param + {len(tool_attrs)} tool attrs"
+                )
             except Exception as e:
-                logger.debug(f"Failed to set OpenInference input attrs: {e}")
+                logger.warning(f"Failed to set OpenInference input attrs: {e}")
 
         try:
             resp = await client.post(
