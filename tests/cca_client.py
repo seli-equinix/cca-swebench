@@ -1,11 +1,16 @@
 """OTel-instrumented HTTP client for the CCA Agent-as-a-Model server.
 
+Uses SSE streaming with idle timeout instead of fixed total timeouts.
+This means tests won't fail just because a task takes longer than expected
+— they only fail if the server stops sending data entirely.
+
 Every method creates OpenTelemetry spans that are exported to Phoenix,
 giving full visibility into test → HTTP request → response flow.
 """
 
 from __future__ import annotations
 
+import json
 import time
 import uuid
 from typing import Any, Dict, List, Optional
@@ -15,8 +20,8 @@ from opentelemetry import trace
 
 # Timeout defaults (seconds)
 TIMEOUT_HEALTH = 10
-TIMEOUT_CHAT = 240
-TIMEOUT_CHAT_SLOW = 480
+TIMEOUT_CONNECT = 30
+TIMEOUT_IDLE = 120       # No data for 120s → dead
 TIMEOUT_DIAGNOSTIC = 15
 
 
@@ -55,16 +60,31 @@ class ChatResult:
 
 
 class CCAClient:
-    """HTTP client for CCA AAAM server with OpenTelemetry tracing."""
+    """HTTP client for CCA AAAM server with streaming + idle timeout.
+
+    Uses SSE streaming to avoid fixed total timeouts. The idle_timeout
+    resets every time data arrives (content, keepalive, progress comments).
+    A task that takes 10 minutes but is actively working will succeed;
+    a hung connection that goes silent for idle_timeout seconds will fail.
+    """
 
     def __init__(
         self,
         base_url: str = "http://192.168.4.205:8500",
         tracer: Optional[trace.Tracer] = None,
+        idle_timeout: float = TIMEOUT_IDLE,
     ) -> None:
         self.base_url = base_url.rstrip("/")
-        self.tracer = tracer or trace.get_tracer("cca-aaam-tests")
-        self._client = httpx.Client(timeout=TIMEOUT_CHAT)
+        self.tracer = tracer or trace.get_tracer("cca-tests")
+        self.idle_timeout = idle_timeout
+        self._client = httpx.Client(
+            timeout=httpx.Timeout(
+                connect=TIMEOUT_CONNECT,
+                read=idle_timeout,
+                write=30.0,
+                pool=30.0,
+            )
+        )
 
     def close(self) -> None:
         self._client.close()
@@ -92,21 +112,33 @@ class CCAClient:
         self,
         message: str,
         session_id: Optional[str] = None,
-        timeout: int = TIMEOUT_CHAT,
+        idle_timeout: Optional[float] = None,
         system: Optional[str] = None,
+        # Legacy parameter — ignored, kept for backwards compatibility
+        timeout: Optional[int] = None,
     ) -> ChatResult:
         """POST /v1/chat/completions — send a message to the CCA agent.
 
-        Creates a Phoenix-visible span with message, response, and timing.
+        Uses SSE streaming with idle timeout. The connection stays open as
+        long as the server sends data (content, keepalives, progress).
+        Only times out if no data arrives for idle_timeout seconds.
+
+        Args:
+            message: The user message to send.
+            session_id: Optional session ID for multi-turn conversations.
+            idle_timeout: Seconds of silence before timeout (default: 120s).
+            system: Optional system message.
+            timeout: DEPRECATED — ignored. Use idle_timeout instead.
         """
         session_id = session_id or f"test-{uuid.uuid4().hex[:12]}"
+        read_timeout = idle_timeout or self.idle_timeout
 
         with self.tracer.start_as_current_span("cca.chat") as span:
             span.set_attribute("openinference.span.kind", "CHAIN")
             span.set_attribute("input.value", message[:500])
             span.set_attribute("cca.session_id", session_id)
             span.set_attribute("cca.message", message[:200])
-            span.set_attribute("cca.timeout", timeout)
+            span.set_attribute("cca.idle_timeout", read_timeout)
 
             messages: List[Dict[str, str]] = []
             if system:
@@ -116,31 +148,17 @@ class CCAClient:
             payload = {
                 "model": "cca",
                 "messages": messages,
-                "stream": False,
+                "stream": True,
                 "session_id": session_id,
             }
 
             t0 = time.time()
             try:
-                resp = self._client.post(
-                    f"{self.base_url}/v1/chat/completions",
-                    json=payload,
-                    headers={"X-Session-Id": session_id},
-                    timeout=timeout,
+                result = self._stream_chat(
+                    payload, session_id, read_timeout, span
                 )
                 elapsed_ms = (time.time() - t0) * 1000
-
-                if resp.status_code != 200:
-                    span.set_attribute("cca.status", "http_error")
-                    span.set_attribute("cca.http_status", resp.status_code)
-                    span.set_attribute("cca.error", resp.text[:500])
-                    return ChatResult(
-                        {"error": resp.text, "status_code": resp.status_code},
-                        elapsed_ms,
-                    )
-
-                data = resp.json()
-                result = ChatResult(data, elapsed_ms)
+                result.elapsed_ms = elapsed_ms
 
                 span.set_attribute("cca.status", "success")
                 span.set_attribute("cca.duration_ms", elapsed_ms)
@@ -148,10 +166,13 @@ class CCAClient:
                 span.set_attribute("cca.response_preview", result.content[:500])
                 span.set_attribute("output.value", result.content[:500])
                 span.set_attribute("cca.finish_reason", result.finish_reason)
-                if result.usage:
-                    span.set_attribute("llm.token_count.prompt", result.usage.get("prompt_tokens", 0))
-                    span.set_attribute("llm.token_count.completion", result.usage.get("completion_tokens", 0))
-                    span.set_attribute("llm.token_count.total", result.usage.get("total_tokens", 0))
+                if result.metadata:
+                    span.set_attribute(
+                        "cca.tool_iterations",
+                        result.metadata.get("tool_iterations", 0),
+                    )
+                    if result.metadata.get("route"):
+                        span.set_attribute("cca.route", result.metadata["route"])
                 if result.user_identified:
                     span.set_attribute("cca.user_identified", True)
                     span.set_attribute("cca.user_name", result.user_name or "")
@@ -164,6 +185,114 @@ class CCAClient:
                 span.set_attribute("cca.error", str(e))
                 span.set_attribute("cca.duration_ms", elapsed_ms)
                 raise
+
+    def _stream_chat(
+        self,
+        payload: Dict[str, Any],
+        session_id: str,
+        read_timeout: float,
+        span: Any,
+    ) -> ChatResult:
+        """Execute streaming chat and accumulate response.
+
+        Parses SSE events, accumulates content + reasoning, and extracts
+        context_metadata from the final metadata event before [DONE].
+        """
+        content_parts: list[str] = []
+        reasoning_parts: list[str] = []
+        completion_id = ""
+        model = ""
+        finish_reason = ""
+        context_metadata: Dict[str, Any] = {}
+
+        timeout = httpx.Timeout(
+            connect=TIMEOUT_CONNECT,
+            read=read_timeout,
+            write=30.0,
+            pool=30.0,
+        )
+
+        with self._client.stream(
+            "POST",
+            f"{self.base_url}/v1/chat/completions",
+            json=payload,
+            headers={"X-Session-Id": session_id},
+            timeout=timeout,
+        ) as resp:
+            if resp.status_code != 200:
+                body = resp.read().decode()
+                return ChatResult(
+                    {"error": body, "status_code": resp.status_code}, 0
+                )
+
+            for line in resp.iter_lines():
+                if not line.strip():
+                    continue
+
+                # SSE comments (keepalive, progress) — skip but they
+                # reset the read timeout, which is the whole point
+                if line.startswith(":"):
+                    continue
+
+                if not line.startswith("data: "):
+                    continue
+
+                data_str = line[6:]  # strip "data: " prefix
+
+                # Terminal marker
+                if data_str == "[DONE]":
+                    break
+
+                try:
+                    chunk = json.loads(data_str)
+                except json.JSONDecodeError:
+                    continue
+
+                # Context metadata event (sent before [DONE])
+                if "context_metadata" in chunk and "choices" not in chunk:
+                    context_metadata = chunk["context_metadata"]
+                    continue
+
+                completion_id = chunk.get("id", completion_id)
+                model = chunk.get("model", model)
+
+                choices = chunk.get("choices", [])
+                if not choices:
+                    continue
+
+                delta = choices[0].get("delta", {})
+                fr = choices[0].get("finish_reason")
+                if fr:
+                    finish_reason = fr
+
+                if delta.get("content"):
+                    content_parts.append(delta["content"])
+                if delta.get("reasoning_content"):
+                    reasoning_parts.append(delta["reasoning_content"])
+
+        # Build a ChatResult that looks like a non-streaming response
+        content = "".join(content_parts)
+        reasoning = "".join(reasoning_parts) or None
+
+        raw = {
+            "id": completion_id,
+            "object": "chat.completion",
+            "model": model,
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": content,
+                        "reasoning": reasoning,
+                    },
+                    "finish_reason": finish_reason,
+                }
+            ],
+            "usage": {},
+            "context_metadata": context_metadata,
+        }
+        return ChatResult(raw, 0)
 
     # ==================== Diagnostic Endpoints ====================
 

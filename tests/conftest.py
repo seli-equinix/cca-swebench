@@ -1,8 +1,8 @@
 """CCA test suite — Phoenix-traced integration tests.
 
-Routes traces to separate Phoenix projects:
-  - cca-user-tests:   user identification, profiles, facts, preferences
-  - cca-search-tests: web search, URL fetch, internet tools
+All traces go to a single Phoenix project (cca-tests) so each request
+shows as ONE unified trace with all steps: routing → agent → tool calls.
+Tests are categorized via span attributes, not separate projects.
 
 Every test creates spans visible in the Phoenix UI at
 http://192.168.4.204:6006/.
@@ -43,9 +43,8 @@ log = logging.getLogger(__name__)
 PHOENIX_ENDPOINT = "http://192.168.4.204:4317"
 CCA_BASE_URL = "http://192.168.4.205:8500"
 
-# Two separate Phoenix projects for different test domains
-PROJECT_USER = "cca-user-tests"
-PROJECT_SEARCH = "cca-search-tests"
+# Single Phoenix project for all tests — categorize via span attributes
+PROJECT_NAME = "cca-tests"
 
 # Inter-test cooldown (seconds) to prevent server overload.
 # Each test triggers LLM inference on vLLM — without cooldown,
@@ -75,59 +74,32 @@ def pytest_configure(config):
 # ==================== Phoenix / OpenTelemetry ====================
 
 
-def _make_tracer(project_name: str) -> tuple:
-    """Create a (TracerProvider, Tracer) pair for a Phoenix project."""
+@pytest.fixture(scope="session")
+def phoenix_provider():
+    """Single TracerProvider for all tests — one Phoenix project."""
     resource = Resource.create({
-        "service.name": project_name,
-        "openinference.project.name": project_name,
+        "service.name": PROJECT_NAME,
+        "openinference.project.name": PROJECT_NAME,
     })
     provider = TracerProvider(resource=resource)
     exporter = OTLPSpanExporter(endpoint=PHOENIX_ENDPOINT, insecure=True)
     provider.add_span_processor(BatchSpanProcessor(exporter))
-    tracer = provider.get_tracer(project_name)
-    return provider, tracer
-
-
-@pytest.fixture(scope="session")
-def user_tracer():
-    """Provider + tracer routed to the cca-user-tests project."""
-    provider, tracer = _make_tracer(PROJECT_USER)
-    yield provider, tracer
+    yield provider
     provider.shutdown()
 
 
 @pytest.fixture(scope="session")
-def search_tracer():
-    """Provider + tracer routed to the cca-search-tests project."""
-    provider, tracer = _make_tracer(PROJECT_SEARCH)
-    yield provider, tracer
-    provider.shutdown()
-
-
-@pytest.fixture(scope="session", autouse=True)
-def default_tracer(user_tracer):
-    """Ensure at least one tracer is active for the session."""
-    yield user_tracer
-
-
-@pytest.fixture
-def phoenix_tracer(request, user_tracer, search_tracer):
-    """Pick the correct (provider, tracer) based on test location.
-
-    Tests in tests/websearch/ → cca-search-tests project
-    Everything else → cca-user-tests project
-    """
-    test_path = request.node.nodeid
-    if "/websearch/" in test_path:
-        return search_tracer
-    return user_tracer
+def phoenix_tracer(phoenix_provider):
+    """Single tracer for the entire test session."""
+    tracer = phoenix_provider.get_tracer(PROJECT_NAME)
+    return phoenix_provider, tracer
 
 
 @pytest.fixture(autouse=True)
 def trace_test(request, phoenix_tracer):
     """Wrap every test in a Phoenix span with test metadata.
 
-    Creates a root span like 'user::test_identify_new_user' so tests
+    Creates a root span like 'websearch::test_basic_search' so tests
     are easy to find and filter in the Phoenix UI.
 
     Annotations are collected during the test via span._pending_annotations
@@ -247,13 +219,13 @@ def judge_model(request):
 
 
 @pytest.fixture(scope="session")
-def cca(user_tracer):
+def cca(phoenix_tracer):
     """CCA AAAM client with Phoenix tracing.
 
     Session-scoped: one HTTP client for the entire test run.
-    Uses user_tracer by default; individual methods accept tracer override.
+    Uses streaming with idle timeout — no fixed total timeout.
     """
-    _provider, tracer = user_tracer
+    _provider, tracer = phoenix_tracer
     client = CCAClient(base_url=CCA_BASE_URL, tracer=tracer)
     yield client
     client.close()

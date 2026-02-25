@@ -601,8 +601,20 @@ async def _handle_chat_completions(
 
             agent_task = asyncio.create_task(run_agent())
 
+            def _build_stream_metadata():
+                """Build context_metadata dict for the streaming finish event."""
+                from .models import ContextMetadata
+                return ContextMetadata(
+                    tool_iterations=getattr(entry, "_tool_iterations", 0),
+                    route=route.expert.value if route else None,
+                    user_identified=session.identified,
+                    user_name=user.display_name if user else None,
+                    execution_time_ms=(time.time() - start_time) * 1000,
+                ).model_dump()
+
             return StreamingResponse(
-                sse_stream(io, agent_task, request, completion_id),
+                sse_stream(io, agent_task, request, completion_id,
+                           metadata_callback=_build_stream_metadata),
                 media_type="text/event-stream",
                 headers={
                     "Cache-Control": "no-cache",

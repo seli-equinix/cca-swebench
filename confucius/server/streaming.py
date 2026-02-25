@@ -43,6 +43,7 @@ async def sse_stream(
     agent_task: asyncio.Task,  # type: ignore[type-arg]
     request: ChatCompletionRequest,
     completion_id: str,
+    metadata_callback: Optional[callable] = None,
 ) -> AsyncGenerator[str, None]:
     """Stream orchestrator output as SSE events.
 
@@ -132,6 +133,16 @@ async def sse_stream(
         finish_reason="stop",
     )
     yield f"data: {finish_chunk.model_dump_json()}\n\n"
+
+    # Send context_metadata event (if callback provided)
+    # This lets streaming clients access tool_iterations, route, etc.
+    if metadata_callback:
+        try:
+            metadata = metadata_callback()
+            if metadata:
+                yield f"data: {json.dumps({'context_metadata': metadata})}\n\n"
+        except Exception as e:
+            logger.warning(f"Failed to build streaming metadata: {e}")
 
     # Send terminal marker
     yield "data: [DONE]\n\n"
