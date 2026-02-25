@@ -255,9 +255,22 @@ class DualModelOrchestrator(AnthropicLLMOrchestrator):
         context: search results, fetched content, and 8B analysis notes.
         """
         # BaseOrchestrator: max_iterations check → get_root_tag() → LLM call
-        await super(AnthropicLLMOrchestrator, self)._process_messages(
-            task, context
-        )
+        try:
+            await super(AnthropicLLMOrchestrator, self)._process_messages(
+                task, context
+            )
+        except Exception as e:
+            # Context overflow on the 8B → escalate to 80B (1M context)
+            if self._using_fast_model and "context length" in str(e):
+                logger.warning(
+                    "Dual-model: 8B context overflow — escalating to 80B: %s",
+                    e,
+                )
+                self._force_primary = True
+                self._last_tool_names = []
+                await self._process_messages(task, context)
+                return
+            raise
 
         if self._tool_use_queue:
             # Standard: tools were called → process them → recurse

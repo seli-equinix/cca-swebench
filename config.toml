@@ -104,8 +104,8 @@ model = "/models/Qwen3-8B-FP8"
 provider = "openai"
 base_url = "http://192.168.4.205:8400/v1"
 api_key_env = "OPENAI_API_KEY"
-initial_max_tokens = 4096
-max_tokens = 8192
+initial_max_tokens = 2048
+max_tokens = 2048
 temperature = 0.3
 
 [providers.local.tester]
