@@ -496,6 +496,7 @@ async def _handle_chat_completions(
                 user_identified=session.identified,
                 user_name=user.display_name if user else None,
                 execution_time_ms=execution_time,
+                route=route.expert.value,
             )
             resp = build_completion_response(
                 content=route.direct_answer,
@@ -512,6 +513,7 @@ async def _handle_chat_completions(
                 user_identified=session.identified,
                 user_name=user.display_name if user else None,
                 execution_time_ms=execution_time,
+                route=route.expert.value,
             )
             resp = build_completion_response(
                 content=route.clarification_question,
@@ -577,6 +579,10 @@ async def _handle_chat_completions(
                             entry, EntryInput(question=user_message)
                         )
                         span.set_attribute("cca.status", "success")
+                        span.set_attribute(
+                            "cca.tool_iterations",
+                            getattr(entry, "tool_iterations", 0),
+                        )
 
                         # Fire note observer in background with span context
                         if note_observer:
@@ -661,7 +667,13 @@ async def _handle_chat_completions(
                 execution_time = (time.time() - start_time) * 1000
                 from .models import ContextMetadata
 
+                # Extract tool iteration count from the entry
+                tool_iters = getattr(entry, "tool_iterations", 0)
+                route_name = route.expert.value if route else None
+
                 metadata = ContextMetadata(
+                    tool_iterations=tool_iters,
+                    route=route_name,
                     user_identified=session.identified,
                     user_name=user.display_name if user else None,
                     execution_time_ms=execution_time,
@@ -670,6 +682,7 @@ async def _handle_chat_completions(
                 span.set_attribute("cca.status", "success")
                 span.set_attribute("cca.execution_time_ms", execution_time)
                 span.set_attribute("cca.response_length", len(response_text))
+                span.set_attribute("cca.tool_iterations", tool_iters)
                 span.set_attribute(OUTPUT_VALUE, response_text[:500])
 
                 # Estimated token counts (4 chars per token)

@@ -112,6 +112,9 @@ class HttpRoutedEntry(Analect[EntryInput, EntryOutput], EntryAnalectMixin):
         self._backend_clients = backend_clients
         self._session_id = session_id
         self._user_id = user_id
+        # Populated after impl() runs — exposes orchestrator metrics
+        self.tool_iterations: int = 0
+        self.tool_names: list[str] = []
 
     @classmethod
     def display_name(cls) -> str:
@@ -189,5 +192,11 @@ class HttpRoutedEntry(Analect[EntryInput, EntryOutput], EntryAnalectMixin):
                 task=task_def,
             ),
         )
+
+        # Capture orchestrator metrics for context_metadata
+        # _num_iterations counts LLM round-trips; subtract 1 for the final
+        # text-only response to get the number of tool-calling iterations.
+        iters = orchestrator._num_iterations
+        self.tool_iterations = max(0, iters - 1) if iters > 0 else 0
 
         return EntryOutput()

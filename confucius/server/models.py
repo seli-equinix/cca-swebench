@@ -178,6 +178,9 @@ class ContextMetadata(BaseModel):
         None, description="Tools called by the agent during this request"
     )
     tool_iterations: int = Field(0, description="Number of tool calling iterations")
+    route: Optional[str] = Field(
+        None, description="Expert route used for this request"
+    )
     user_identified: bool = Field(
         False, description="Whether the user was identified"
     )
