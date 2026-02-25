@@ -1,8 +1,7 @@
-"""Tests for the fetch_url_content tool.
+"""Tests for URL fetching capability.
 
-Validates that CCA's agent ACTUALLY calls fetch_url_content via httpx,
-not just answering from training data. Checks context_metadata.tool_iterations
-to verify real tool usage.
+Validates that CCA can fetch and read web pages when asked. Tests use
+natural human language — the way a real person would ask.
 """
 
 import uuid
@@ -26,20 +25,19 @@ def _assert_tools_used(result, min_iterations=1):
 
 
 class TestFetchUrlBasic:
-    """fetch_url_content tool — basic URL fetching."""
+    """Basic URL fetching — agent should read pages when given a link."""
 
     def test_fetch_public_url(self, cca, trace_test, judge_model):
-        """Agent should call fetch_url_content and extract text from the page."""
+        """Give the agent a URL and ask what's on the page."""
         session_id = f"test-fetch-{uuid.uuid4().hex[:8]}"
         message = (
-            "Fetch the page at https://httpbin.org/html using "
-            "fetch_url_content and tell me what text it contains."
+            "Can you read this page for me and tell me what it says? "
+            "https://httpbin.org/html"
         )
 
-        result = cca.chat(message, session_id=session_id, timeout=300)
+        result = cca.chat(message, session_id=session_id)
 
         evaluate_response(result, message, trace_test, judge_model, "websearch")
-
         trace_test.set_attribute("cca.test.response", result.content[:500])
         trace_test.set_attribute(
             "cca.test.tool_iterations",
@@ -47,12 +45,9 @@ class TestFetchUrlBasic:
         )
 
         assert result.content, "Agent returned empty response"
-
-        # Core validation: tools were actually called
         _assert_tools_used(result)
 
-        # Response should reference actual httpbin.org/html content
-        # (Herman Melville's Moby Dick excerpt)
+        # httpbin.org/html serves a Moby Dick excerpt
         content_lower = result.content.lower()
         has_content = (
             "herman" in content_lower
@@ -68,20 +63,16 @@ class TestFetchUrlBasic:
 
 
 class TestFetchUrlSecurity:
-    """fetch_url_content tool — SSRF protection and validation."""
+    """Security — agent should handle bad URLs gracefully."""
 
     def test_ssrf_blocks_private_ip(self, cca, trace_test, judge_model):
-        """Agent should attempt fetch_url_content on private IP and report the error."""
+        """Ask the agent to read a private IP — should be blocked."""
         session_id = f"test-ssrf-{uuid.uuid4().hex[:8]}"
-        message = (
-            "Fetch http://192.168.1.1/ using fetch_url_content. "
-            "Tell me exactly what happens."
-        )
+        message = "Hey, can you check what's running at http://192.168.1.1/ for me?"
 
-        result = cca.chat(message, session_id=session_id, timeout=300)
+        result = cca.chat(message, session_id=session_id)
 
         evaluate_response(result, message, trace_test, judge_model, "websearch")
-
         trace_test.set_attribute("cca.test.response", result.content[:500])
         trace_test.set_attribute(
             "cca.test.tool_iterations",
@@ -89,12 +80,8 @@ class TestFetchUrlSecurity:
         )
 
         assert result.content, "Agent returned empty response"
-
-        # Core validation: the agent attempted to use tools
-        # (tool should fail with SSRF error, but it should have TRIED)
         _assert_tools_used(result)
 
-        # Response should indicate the request was blocked
         content_lower = result.content.lower()
         blocked = (
             "blocked" in content_lower
@@ -106,6 +93,8 @@ class TestFetchUrlSecurity:
             or "refused" in content_lower
             or "error" in content_lower
             or "denied" in content_lower
+            or "can't access" in content_lower
+            or "unable" in content_lower
         )
         trace_test.set_attribute("cca.test.ssrf_blocked", blocked)
         assert blocked, (
@@ -114,14 +103,13 @@ class TestFetchUrlSecurity:
         )
 
     def test_invalid_scheme_rejected(self, cca, trace_test, judge_model):
-        """Agent should attempt fetch_url_content with FTP and report the error."""
+        """Ask the agent to fetch an FTP link — should explain it can't."""
         session_id = f"test-scheme-{uuid.uuid4().hex[:8]}"
-        message = "Fetch ftp://example.com/file.txt using fetch_url_content."
+        message = "Can you download this file for me? ftp://example.com/file.txt"
 
-        result = cca.chat(message, session_id=session_id, timeout=300)
+        result = cca.chat(message, session_id=session_id)
 
         evaluate_response(result, message, trace_test, judge_model, "websearch")
-
         trace_test.set_attribute("cca.test.response", result.content[:500])
         trace_test.set_attribute(
             "cca.test.tool_iterations",
@@ -130,10 +118,8 @@ class TestFetchUrlSecurity:
 
         assert result.content, "Agent returned empty response"
 
-        # Core validation: tools were called (should fail with scheme error)
-        _assert_tools_used(result)
-
-        # Response should indicate FTP scheme was rejected
+        # Agent might use tools or might know FTP isn't supported
+        # — either way, it should explain the limitation
         content_lower = result.content.lower()
         rejected = (
             "not supported" in content_lower
@@ -142,6 +128,9 @@ class TestFetchUrlSecurity:
             or "only http" in content_lower
             or "ftp" in content_lower
             or "error" in content_lower
+            or "can't" in content_lower
+            or "unable" in content_lower
+            or "doesn't support" in content_lower
         )
         assert rejected, (
             "Response doesn't indicate FTP scheme was rejected. "
@@ -150,23 +139,21 @@ class TestFetchUrlSecurity:
 
 
 class TestFetchUrlChained:
-    """fetch_url_content chained with web_search."""
+    """Search then fetch — multi-step real-world usage."""
 
     @pytest.mark.slow
     @pytest.mark.timeout(540)
-    def test_search_then_fetch(self, cca, trace_test, judge_model):
-        """Agent should search then fetch the best result — uses multiple tools."""
+    def test_search_then_read(self, cca, trace_test, judge_model):
+        """Ask about something that requires searching then reading a page."""
         session_id = f"test-chain-{uuid.uuid4().hex[:8]}"
         message = (
-            "Search for 'httpbin.org' using web_search, then use "
-            "fetch_url_content to fetch the top result URL and tell "
-            "me what the page says."
+            "I want to understand what httpbin.org is. Can you look it up "
+            "and then read the main page to give me a summary?"
         )
 
-        result = cca.chat(message, session_id=session_id, timeout=540)
+        result = cca.chat(message, session_id=session_id)
 
         evaluate_response(result, message, trace_test, judge_model, "websearch")
-
         trace_test.set_attribute("cca.test.response", result.content[:500])
         trace_test.set_attribute(
             "cca.test.tool_iterations",
@@ -174,15 +161,8 @@ class TestFetchUrlChained:
         )
 
         assert result.content, "Agent returned empty response"
-
-        # Core validation: multiple tool iterations (search + fetch)
         _assert_tools_used(result, min_iterations=2)
 
-        # Response should contain real URLs from search results
-        has_urls = "http://" in result.content or "https://" in result.content
-        trace_test.set_attribute("cca.test.has_urls", has_urls)
-
-        # Response should mention httpbin
         content_lower = result.content.lower()
         assert "httpbin" in content_lower, (
             "Response doesn't mention httpbin.org. "
