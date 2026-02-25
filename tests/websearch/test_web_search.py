@@ -41,7 +41,7 @@ class TestWebSearchBasic:
         result = cca.chat(message, session_id=session_id)
 
         evaluate_response(result, message, trace_test, judge_model, "websearch")
-        trace_test.set_attribute("cca.test.response", result.content[:500])
+        trace_test.set_attribute("cca.test.response", result.content)
         trace_test.set_attribute(
             "cca.test.tool_iterations",
             result.metadata.get("tool_iterations", 0),
@@ -64,7 +64,7 @@ class TestWebSearchBasic:
 
         evaluate_response(result, message, trace_test, judge_model, "websearch")
         trace_test.set_attribute("cca.test.query", nonsense)
-        trace_test.set_attribute("cca.test.response", result.content[:500])
+        trace_test.set_attribute("cca.test.response", result.content)
         trace_test.set_attribute(
             "cca.test.tool_iterations",
             result.metadata.get("tool_iterations", 0),
@@ -100,7 +100,7 @@ class TestWebSearchAdvanced:
         result = cca.chat(message, session_id=session_id)
 
         evaluate_response(result, message, trace_test, judge_model, "websearch")
-        trace_test.set_attribute("cca.test.response", result.content[:500])
+        trace_test.set_attribute("cca.test.response", result.content)
         trace_test.set_attribute(
             "cca.test.tool_iterations",
             result.metadata.get("tool_iterations", 0),
@@ -120,7 +120,7 @@ class TestWebSearchAdvanced:
         result = cca.chat(message, session_id=session_id)
 
         evaluate_response(result, message, trace_test, judge_model, "websearch")
-        trace_test.set_attribute("cca.test.response", result.content[:500])
+        trace_test.set_attribute("cca.test.response", result.content)
         trace_test.set_attribute(
             "cca.test.tool_iterations",
             result.metadata.get("tool_iterations", 0),
@@ -144,7 +144,7 @@ class TestWebSearchAdvanced:
         result = cca.chat(message, session_id=session_id)
 
         evaluate_response(result, message, trace_test, judge_model, "websearch")
-        trace_test.set_attribute("cca.test.response", result.content[:800])
+        trace_test.set_attribute("cca.test.response", result.content)
         trace_test.set_attribute(
             "cca.test.tool_iterations",
             result.metadata.get("tool_iterations", 0),

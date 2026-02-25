@@ -360,8 +360,8 @@ def evaluate_response(
             evals[ev["name"]] = ev
 
     # --- Set OpenInference I/O so Phoenix shows input/output columns ---
-    trace_span.set_attribute("input.value", message[:2000])
-    trace_span.set_attribute("output.value", result.content[:2000])
+    trace_span.set_attribute("input.value", message)
+    trace_span.set_attribute("output.value", result.content)
 
     # --- Log to span attributes (for filtering) ---
     for ev in evals.values():
