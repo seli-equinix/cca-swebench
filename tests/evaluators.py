@@ -359,6 +359,10 @@ def evaluate_response(
             ev = llm_eval(result, message, judge_model)
             evals[ev["name"]] = ev
 
+    # --- Set OpenInference I/O so Phoenix shows input/output columns ---
+    trace_span.set_attribute("input.value", message[:2000])
+    trace_span.set_attribute("output.value", result.content[:2000])
+
     # --- Log to span attributes (for filtering) ---
     for ev in evals.values():
         name = ev["name"]
