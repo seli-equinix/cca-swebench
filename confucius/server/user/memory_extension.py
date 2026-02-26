@@ -88,16 +88,27 @@ class UserMemoryExtension(ToolUseExtension):
                 name="remember_user_fact",
                 description=(
                     "Save an important fact about the current user. "
-                    "Facts persist across sessions and are included in future context. "
-                    "Use for things like: employer, main project, server names, etc. "
-                    "Call immediately when the user mentions personal details during work."
+                    "Facts persist across sessions and are included in future context.\n\n"
+                    "Standard keys: employer, main_project, team, role, etc.\n\n"
+                    "Special keys for structured profile data:\n"
+                    "- key='skill', value='Python' → adds skill to profile skills list\n"
+                    "- key='alias', value='seli' → adds alias/nickname to profile\n"
+                    "- key='remove_skill', value='Java' → removes skill from profile\n"
+                    "- key='remove_alias', value='old_name' → removes alias from profile\n\n"
+                    "Call immediately when the user mentions personal details, "
+                    "skills, or nicknames during work."
                 ),
                 input_schema={
                     "type": "object",
                     "properties": {
                         "key": {
                             "type": "string",
-                            "description": "Fact category (e.g. 'employer', 'main_project')",
+                            "description": (
+                                "Fact category. Use 'skill' to add a skill, "
+                                "'alias' to add a nickname, 'remove_skill' to "
+                                "remove a skill, 'remove_alias' to remove a nickname, "
+                                "or any other key for general facts."
+                            ),
                         },
                         "value": {
                             "type": "string",
@@ -174,12 +185,51 @@ class UserMemoryExtension(ToolUseExtension):
         )
         return json.dumps(result)
 
+    # Keys that route to structured profile operations
+    _SKILL_KEYS = {"skill", "skills", "add_skill"}
+    _ALIAS_KEYS = {"alias", "aliases", "add_alias", "nickname"}
+    _REMOVE_SKILL_KEYS = {"remove_skill", "remove_skills"}
+    _REMOVE_ALIAS_KEYS = {"remove_alias", "remove_aliases", "remove_nickname"}
+
     async def _handle_remember_fact(self, inp: dict) -> str:
         key = inp.get("key", "").strip()
         value = inp.get("value", "").strip()
         if not key or not value:
             return "Error: both key and value are required"
 
+        key_lower = key.lower()
+
+        # Route structured profile operations to proper methods
+        if self._session.identified and self._session.user_id:
+            if key_lower in self._SKILL_KEYS:
+                result = await self._session_mgr.add_user_skill(
+                    self._session.user_id, value
+                )
+                logger.info("Added skill '%s' for user %s", value, self._session.user_id)
+                return json.dumps(result)
+
+            if key_lower in self._ALIAS_KEYS:
+                result = await self._session_mgr.add_user_alias(
+                    self._session.user_id, value
+                )
+                logger.info("Added alias '%s' for user %s", value, self._session.user_id)
+                return json.dumps(result)
+
+            if key_lower in self._REMOVE_SKILL_KEYS:
+                result = await self._session_mgr.remove_user_skill(
+                    self._session.user_id, value
+                )
+                logger.info("Removed skill '%s' for user %s", value, self._session.user_id)
+                return json.dumps(result)
+
+            if key_lower in self._REMOVE_ALIAS_KEYS:
+                result = await self._session_mgr.remove_user_alias(
+                    self._session.user_id, value
+                )
+                logger.info("Removed alias '%s' for user %s", value, self._session.user_id)
+                return json.dumps(result)
+
+        # Default: store as generic fact
         success = await self._session_mgr.remember_user_fact(
             self._session, key, value
         )

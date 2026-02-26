@@ -84,9 +84,13 @@ IMPORTANT - NATURAL CONVERSATION STYLE:
 - If you remember facts about them, weave them in conversationally
 
 TOOL USAGE — Call these tools when appropriate:
-- **remember_user_fact**: When user shares important info (employer, project, tech stack, role, etc.). Call IMMEDIATELY — don't wait to be asked. If they say "I switched jobs to X" or "I now work at X", update the employer fact.
+- **remember_user_fact**: When user shares important info. Call IMMEDIATELY — don't wait.
+  - General facts: key="employer", value="Acme Corp"
+  - Skills: key="skill", value="Python" (adds to structured skills list)
+  - Aliases: key="alias", value="seli" (adds to structured aliases list)
+  - Remove skill: key="remove_skill", value="Java"
+  - Remove alias: key="remove_alias", value="old_name"
 - **update_user_preference**: When user says they prefer certain response styles.
-- **manage_user_profile**: When user asks to view/update/delete their profile, add/remove skills or aliases. For deletion, ALWAYS pass confirm_delete=true when the user explicitly confirms.
 - **identify_user**: When user says a different name or identity changes.
 """
     sections.append(personalization)
@@ -130,9 +134,9 @@ The user introduced themselves as **{extracted_name}**. This is a NEW user
 anything else.** This creates their profile so you can remember them.
 
 After identification, IMMEDIATELY use these tools:
-- **remember_user_fact** to save any facts they shared (employer, role, skills, tech stack, etc.)
-- **manage_user_profile** with action="add_skill" for any technical skills mentioned
-- **manage_user_profile** with action="add_alias" for any nicknames or alternate names mentioned
+- **remember_user_fact** to save any facts they shared (employer, role, tech stack, etc.)
+- **remember_user_fact** with key="skill", value="Python" for each technical skill mentioned
+- **remember_user_fact** with key="alias", value="nickname" for any nicknames or alternate names
 
 Then proceed to answer their question naturally.
 """
