@@ -370,6 +370,10 @@ class UserSessionManager:
         r"pleased\s+to\s+meet\s+you[,!.\s]+(?:i'?m|i am|call me)\s+([A-Za-z][A-Za-z0-9_-]{1,20})(?:\s|$|[.,!?])",
         # 27. "introduce myself - <name>"
         r"introduce\s+myself[,.\s:]+(?:i'?m\s+)?([A-Za-z][A-Za-z0-9_-]{1,20})(?:\s|$|[.,!?])",
+        # 28. "Hey <name>." / "Hi <name>," (direct greeting with name)
+        r"^(?:hey|hi|hello|yo)[,!.\s]+([A-Za-z][A-Za-z0-9_-]{1,20})[.,!]",
+        # 29. "Hi <name> here" (already exists but let's add "Hi <name>, I" for follow-up)
+        r"^(?:hey|hi|hello)[,!.\s]+([A-Za-z][A-Za-z0-9_-]{1,20})[,.\s]+(?:I|please|can|could|would)",
     ]
 
     # ------------------------------------------------------------------
