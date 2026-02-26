@@ -38,8 +38,23 @@ class TestInferUser:
 
         evaluate_response(result, message, trace_test, judge_model, "user")
 
+        tool_iters = result.metadata.get("tool_iterations", 0)
         trace_test.set_attribute("cca.test.response", result.content[:500])
+        trace_test.set_attribute("cca.test.tool_iterations", tool_iters)
         assert result.content, "Agent returned empty response"
+
+        # Coding task should have used tools (bash, file edit, etc.)
+        assert tool_iters >= 1, (
+            f"Coding task should trigger tool use but got "
+            f"tool_iterations={tool_iters}. "
+            f"Response: {result.content[:200]}"
+        )
+
+        # Response should not contain raw tool_call XML
+        assert "<tool_call>" not in result.content, (
+            "Response contains raw <tool_call> XML — tools leaked into "
+            f"text instead of being executed. Response: {result.content[:300]}"
+        )
 
         # User should exist (not duplicated)
         user = cca.find_user_by_name(name)

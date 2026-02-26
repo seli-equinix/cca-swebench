@@ -17,11 +17,20 @@ system() which we override to tag chunks by type for proper SSE formatting.
 from __future__ import annotations
 
 import asyncio
+import re
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from ..core.io.base import IOInterface
 from ..core import types as cf
+
+# Strip raw tool_call XML that Qwen models sometimes leak into text content.
+# vLLM's tool call parser extracts the actual tool calls but may leave
+# remnants in the text stream.  These should never reach the user.
+_TOOL_CALL_RE = re.compile(
+    r"<tool_call>\s*\{.*?\}\s*</tool_call>",
+    re.DOTALL,
+)
 
 
 @dataclass
@@ -53,7 +62,14 @@ class HttpIOInterface(IOInterface):
             await self._stream_queue.put(chunk)
 
     async def ai(self, text: str, **kwargs: Any) -> None:
-        """Capture assistant response text."""
+        """Capture assistant response text.
+
+        Strips raw <tool_call> XML blocks that Qwen models sometimes
+        leak into text content alongside proper tool_calls.
+        """
+        text = _TOOL_CALL_RE.sub("", text).strip()
+        if not text:
+            return  # Nothing left after stripping — skip empty chunk
         chunk = OutputChunk(text=text, chunk_type="assistant")
         self._buffer.append(chunk)
         if self._stream_queue is not None:

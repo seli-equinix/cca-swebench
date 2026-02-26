@@ -108,6 +108,9 @@ class DualModelOrchestrator(AnthropicLLMOrchestrator):
     # Stall detection: track 8B output hashes to detect repetition
     _last_fast_context_hash: int = PrivateAttr(default=0)
     _repeated_context_count: int = PrivateAttr(default=0)
+    # Post-completion synthesis: track whether tools ran and synthesis done
+    _had_tool_iterations: bool = PrivateAttr(default=False)
+    _synthesis_done: bool = PrivateAttr(default=False)
 
     # ── Model selection ──────────────────────────────────────────
 
@@ -299,12 +302,14 @@ class DualModelOrchestrator(AnthropicLLMOrchestrator):
     async def _process_messages(
         self, task: str, context: AnalectRunContext
     ) -> None:
-        """Override to force 80B synthesis after 8B research completes.
+        """Override with two extra synthesis branches:
 
-        Replicates AnthropicLLMOrchestrator._process_messages() with one
-        extra branch: when the 8B finishes without tools, force one more
-        iteration with the 80B for synthesis. The 80B sees ALL accumulated
-        context: search results, fetched content, and 8B analysis notes.
+        1. 8B done → force 80B synthesis (existing: research → summary)
+        2. 80B done after tools → force summary (new: ensures the user
+           sees what files were created, code written, and test results
+           instead of just running commentary from tool iterations)
+
+        Branch order: tool_use_queue → 8B done → tool-work summary → normal end
         """
         # BaseOrchestrator: max_iterations check → get_root_tag() → LLM call
         try:
@@ -345,6 +350,26 @@ class DualModelOrchestrator(AnthropicLLMOrchestrator):
             self._last_fast_context_hash = 0
             await self._process_messages(task, context)
 
+        elif self._had_tool_iterations and not self._synthesis_done:
+            # 80B finished after tool work but hasn't summarized yet.
+            # Force one more 80B call to produce a clear summary of
+            # what was accomplished (files created, code written, test results).
+            logger.info(
+                "Dual-model: tool work complete — forcing synthesis summary"
+            )
+            self._synthesis_done = True
+            context.memory_manager.add_messages([
+                CfMessage(
+                    type=cf.MessageType.HUMAN,
+                    content=(
+                        "Now give a clear summary of what you accomplished: "
+                        "what files you created or modified, the key code, "
+                        "and the results of any tests. Show the final code."
+                    ),
+                )
+            ])
+            await self._process_messages(task, context)
+
         else:
             # 80B finished — normal end, run extension hooks
             try:
@@ -375,6 +400,7 @@ class DualModelOrchestrator(AnthropicLLMOrchestrator):
         # (queue is cleared in _process_messages finally block)
         self._last_tool_names = [tu.name for tu in self._tool_use_queue]
         self._last_queue_had_error = False
+        self._had_tool_iterations = True
 
         await super()._process_tool_use_queue(context)
 
