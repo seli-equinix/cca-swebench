@@ -50,6 +50,12 @@ logger = logging.getLogger(__name__)
 # Max consecutive 8B iterations with tool errors before escalating to 80B
 MAX_FAST_CONSECUTIVE_FAILURES = 3
 
+# Max consecutive 8B research iterations before forcing 80B synthesis.
+# The 8B should research thoroughly, but if it keeps repeating the same
+# tools without stopping, force the 80B to synthesize what we have.
+# After synthesis, the counter resets — the 80B can delegate back to 8B.
+MAX_FAST_CONSECUTIVE_RESEARCH = 6
+
 # Tools that only READ data — safe for the 8B to orchestrate.
 # Any tool NOT in this set triggers 80B on the next iteration.
 RESEARCH_TOOLS = frozenset({
@@ -91,6 +97,7 @@ class DualModelOrchestrator(AnthropicLLMOrchestrator):
     _using_fast_model: bool = PrivateAttr(default=False)
     _model_reason: str = PrivateAttr(default="initial planning")
     _consecutive_fast_failures: int = PrivateAttr(default=0)
+    _consecutive_fast_research: int = PrivateAttr(default=0)
     _force_primary: bool = PrivateAttr(default=False)
     _last_queue_had_error: bool = PrivateAttr(default=False)
 
@@ -136,7 +143,16 @@ class DualModelOrchestrator(AnthropicLLMOrchestrator):
             return False
         # After tool execution: use 8B only if ALL tools were research tools
         if self._last_tool_names:
-            return all(t in RESEARCH_TOOLS for t in self._last_tool_names)
+            if all(t in RESEARCH_TOOLS for t in self._last_tool_names):
+                # Check if 8B has been researching too long without synthesis
+                if self._consecutive_fast_research >= MAX_FAST_CONSECUTIVE_RESEARCH:
+                    logger.info(
+                        "Dual-model: 8B hit %d consecutive research iterations "
+                        "— forcing 80B synthesis",
+                        self._consecutive_fast_research,
+                    )
+                    return False
+                return True
         # No tools in last iteration (final synthesis) — 80B
         return False
 
@@ -274,6 +290,11 @@ class DualModelOrchestrator(AnthropicLLMOrchestrator):
 
         if self._tool_use_queue:
             # Standard: tools were called → process them → recurse
+            # Track consecutive 8B research iterations
+            if self._using_fast_model:
+                self._consecutive_fast_research += 1
+            else:
+                self._consecutive_fast_research = 0
             try:
                 await self._process_tool_use_queue(context)
             except OrchestratorInterruption as exc:
@@ -284,13 +305,14 @@ class DualModelOrchestrator(AnthropicLLMOrchestrator):
 
         elif self._using_fast_model:
             # 8B finished research (no more tools) → force 80B synthesis.
-            # Lock to 80B for rest of request to prevent ping-pong loops
-            # (80B calls web_search → 8B loops → force 80B → repeat).
+            # Reset counter so 80B can delegate back to 8B if needed.
             logger.info(
-                "Dual-model: 8B research complete — forcing 80B synthesis"
+                "Dual-model: 8B research complete (%d iterations) "
+                "— forcing 80B synthesis",
+                self._consecutive_fast_research,
             )
             self._last_tool_names = []
-            self._force_primary = True  # Stay on 80B from here on
+            self._consecutive_fast_research = 0
             await self._process_messages(task, context)
 
         else:
