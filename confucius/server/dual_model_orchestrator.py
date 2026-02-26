@@ -26,6 +26,13 @@ Context preservation:
     _process_plain_text stores the post-on_llm_output text). So we
     explicitly save 8B text to memory BEFORE returning "" for display.
     The 80B then sees all research context in get_memory_by_visibility().
+
+Stall detection:
+    The 8B can research for as many iterations as it needs — there is no
+    fixed cap. Instead, we detect when the 8B is stuck by hashing its
+    output. If the 8B produces the same analysis text twice in a row,
+    it's looping, not thinking. We force 80B synthesis and reset so the
+    80B can delegate back to the 8B if it needs more research.
 """
 
 from __future__ import annotations
@@ -50,11 +57,9 @@ logger = logging.getLogger(__name__)
 # Max consecutive 8B iterations with tool errors before escalating to 80B
 MAX_FAST_CONSECUTIVE_FAILURES = 3
 
-# Max consecutive 8B research iterations before forcing 80B synthesis.
-# The 8B should research thoroughly, but if it keeps repeating the same
-# tools without stopping, force the 80B to synthesize what we have.
-# After synthesis, the counter resets — the 80B can delegate back to 8B.
-MAX_FAST_CONSECUTIVE_RESEARCH = 6
+# How many times the 8B can produce identical output before we consider
+# it stuck. 2 means: first time is fine, second identical output = stalled.
+STALL_REPEAT_THRESHOLD = 2
 
 # Tools that only READ data — safe for the 8B to orchestrate.
 # Any tool NOT in this set triggers 80B on the next iteration.
@@ -89,6 +94,7 @@ class DualModelOrchestrator(AnthropicLLMOrchestrator):
     Key behaviours:
     - 8B text → memory (context for 80B), not streamed to user
     - When 8B finishes research → force 80B synthesis iteration
+    - Stall detection: if 8B repeats itself, force synthesis
     - Quality gate escalates to 80B after consecutive 8B failures
     """
 
@@ -97,9 +103,11 @@ class DualModelOrchestrator(AnthropicLLMOrchestrator):
     _using_fast_model: bool = PrivateAttr(default=False)
     _model_reason: str = PrivateAttr(default="initial planning")
     _consecutive_fast_failures: int = PrivateAttr(default=0)
-    _consecutive_fast_research: int = PrivateAttr(default=0)
     _force_primary: bool = PrivateAttr(default=False)
     _last_queue_had_error: bool = PrivateAttr(default=False)
+    # Stall detection: track 8B output hashes to detect repetition
+    _last_fast_context_hash: int = PrivateAttr(default=0)
+    _repeated_context_count: int = PrivateAttr(default=0)
 
     # ── Model selection ──────────────────────────────────────────
 
@@ -130,6 +138,10 @@ class DualModelOrchestrator(AnthropicLLMOrchestrator):
             params.additional_kwargs.update(fast.additional_kwargs)
         return params
 
+    def _is_8b_stalled(self) -> bool:
+        """Check if the 8B is stuck producing the same output."""
+        return self._repeated_context_count >= STALL_REPEAT_THRESHOLD
+
     def _should_use_fast_model(self) -> bool:
         """Decide whether this iteration should use the 8B model."""
         # No tool_orchestrator configured
@@ -144,12 +156,12 @@ class DualModelOrchestrator(AnthropicLLMOrchestrator):
         # After tool execution: use 8B only if ALL tools were research tools
         if self._last_tool_names:
             if all(t in RESEARCH_TOOLS for t in self._last_tool_names):
-                # Check if 8B has been researching too long without synthesis
-                if self._consecutive_fast_research >= MAX_FAST_CONSECUTIVE_RESEARCH:
+                # Stall detection: if 8B is repeating itself, force synthesis
+                if self._is_8b_stalled():
                     logger.info(
-                        "Dual-model: 8B hit %d consecutive research iterations "
+                        "Dual-model: 8B stalled (repeated output %d times) "
                         "— forcing 80B synthesis",
-                        self._consecutive_fast_research,
+                        self._repeated_context_count,
                     )
                     return False
                 return True
@@ -180,6 +192,8 @@ class DualModelOrchestrator(AnthropicLLMOrchestrator):
             if self._num_iterations == 0
             else "quality gate"
             if self._force_primary
+            else "8B stalled"
+            if self._is_8b_stalled()
             else f"creation: {self._last_tool_names}"
             if self._last_tool_names
             else "final synthesis"
@@ -219,6 +233,10 @@ class DualModelOrchestrator(AnthropicLLMOrchestrator):
                 "cca.dual_model.consecutive_failures",
                 self._consecutive_fast_failures,
             )
+            span.set_attribute(
+                "cca.dual_model.repeated_context_count",
+                self._repeated_context_count,
+            )
             if self._last_tool_names:
                 span.set_attribute(
                     "cca.dual_model.last_tools",
@@ -232,7 +250,7 @@ class DualModelOrchestrator(AnthropicLLMOrchestrator):
             span.set_attribute(OUTPUT_VALUE, str(result)[:500] if result else "")
             return result
 
-    # ── 8B context preservation ──────────────────────────────────
+    # ── 8B context preservation + stall detection ─────────────────
 
     async def on_llm_output(
         self, text: str, context: AnalectRunContext
@@ -244,6 +262,9 @@ class DualModelOrchestrator(AnthropicLLMOrchestrator):
         text. We explicitly save 8B text to memory BEFORE returning ""
         so the 80B sees the 8B's research analysis in subsequent
         iterations via get_memory_by_visibility().
+
+        Also tracks output hashes for stall detection — if the 8B
+        produces the same analysis twice in a row, it's stuck.
         """
         if self._using_fast_model:
             if text.strip():
@@ -251,6 +272,21 @@ class DualModelOrchestrator(AnthropicLLMOrchestrator):
                 context.memory_manager.add_messages([
                     CfMessage(type=cf.MessageType.AI, content=text)
                 ])
+
+                # Stall detection: hash the output to detect repetition
+                context_hash = hash(text.strip())
+                if context_hash == self._last_fast_context_hash:
+                    self._repeated_context_count += 1
+                    logger.info(
+                        "Dual-model: 8B repeated output (%d chars, "
+                        "repeat #%d)",
+                        len(text),
+                        self._repeated_context_count,
+                    )
+                else:
+                    self._repeated_context_count = 0
+                    self._last_fast_context_hash = context_hash
+
                 logger.info(
                     "Dual-model: 8B context (%d chars) → memory for 80B",
                     len(text),
@@ -290,11 +326,6 @@ class DualModelOrchestrator(AnthropicLLMOrchestrator):
 
         if self._tool_use_queue:
             # Standard: tools were called → process them → recurse
-            # Track consecutive 8B research iterations
-            if self._using_fast_model:
-                self._consecutive_fast_research += 1
-            else:
-                self._consecutive_fast_research = 0
             try:
                 await self._process_tool_use_queue(context)
             except OrchestratorInterruption as exc:
@@ -305,14 +336,13 @@ class DualModelOrchestrator(AnthropicLLMOrchestrator):
 
         elif self._using_fast_model:
             # 8B finished research (no more tools) → force 80B synthesis.
-            # Reset counter so 80B can delegate back to 8B if needed.
+            # Reset stall detection so 80B can delegate back to 8B.
             logger.info(
-                "Dual-model: 8B research complete (%d iterations) "
-                "— forcing 80B synthesis",
-                self._consecutive_fast_research,
+                "Dual-model: 8B research complete — forcing 80B synthesis"
             )
             self._last_tool_names = []
-            self._consecutive_fast_research = 0
+            self._repeated_context_count = 0
+            self._last_fast_context_hash = 0
             await self._process_messages(task, context)
 
         else:
