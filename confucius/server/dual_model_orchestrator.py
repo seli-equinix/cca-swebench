@@ -111,6 +111,8 @@ class DualModelOrchestrator(AnthropicLLMOrchestrator):
     # Post-completion synthesis: track whether tools ran and synthesis done
     _had_tool_iterations: bool = PrivateAttr(default=False)
     _synthesis_done: bool = PrivateAttr(default=False)
+    # Tool-nudge: re-prompt once if model describes intent but doesn't call tools
+    _tool_nudge_done: bool = PrivateAttr(default=False)
 
     # ── Model selection ──────────────────────────────────────────
 
@@ -348,6 +350,32 @@ class DualModelOrchestrator(AnthropicLLMOrchestrator):
             self._last_tool_names = []
             self._repeated_context_count = 0
             self._last_fast_context_hash = 0
+            await self._process_messages(task, context)
+
+        elif (
+            not self._had_tool_iterations
+            and not self._tool_nudge_done
+            and self._num_iterations <= 2
+        ):
+            # Model described intent but didn't call tools on first turn.
+            # Qwen3 sometimes generates markdown code blocks instead of
+            # making tool calls.  Nudge it once to actually use tools.
+            logger.info(
+                "Dual-model: no tools called after %d iterations "
+                "— nudging model to use tools",
+                self._num_iterations,
+            )
+            self._tool_nudge_done = True
+            context.memory_manager.add_messages([
+                CfMessage(
+                    type=cf.MessageType.HUMAN,
+                    content=(
+                        "You have bash and file editing tools available. "
+                        "Don't just describe what you'll do — use the tools "
+                        "to actually execute the code. Start now."
+                    ),
+                )
+            ])
             await self._process_messages(task, context)
 
         elif self._had_tool_iterations and not self._synthesis_done:
