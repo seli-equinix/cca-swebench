@@ -1243,8 +1243,21 @@ class UserSessionManager:
                     primary, alias = name2, name1
                 elif "merge" in message_lower or "combine" in message_lower:
                     primary, alias = name1, name2
+                elif any(
+                    w in message_lower
+                    for w in [
+                        "also known as",
+                        " aka ",
+                        "a.k.a",
+                        "call me",
+                        "friends call me",
+                        "people call me",
+                    ]
+                ):
+                    # "I'm X, also known as Y" → X is primary, Y is alias
+                    primary, alias = name1, name2
                 else:
-                    primary, alias = name2, name1
+                    primary, alias = name1, name2
 
                 logger.info(
                     "Detected alias consolidation: '%s' and '%s' "
