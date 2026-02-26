@@ -906,3 +906,54 @@ async def notes_search(
         "count": len(results),
         "notes": results,
     }
+
+
+# ==================== Admin / Testing Endpoints ====================
+
+
+@app.get("/workspace/files")
+async def list_workspace_files() -> Dict[str, Any]:
+    """List files in /workspace (for test cleanup verification)."""
+    import os
+
+    workspace = "/workspace"
+    if not os.path.isdir(workspace):
+        return {"error": "Workspace directory not found", "files": []}
+    try:
+        files = os.listdir(workspace)
+        return {"count": len(files), "files": sorted(files)}
+    except Exception as e:
+        return {"error": str(e), "files": []}
+
+
+@app.delete("/workspace/files")
+async def clean_workspace_files(prefix: str = "") -> Dict[str, Any]:
+    """Delete files from /workspace matching an optional prefix.
+
+    Without prefix, deletes ALL files (use for test cleanup).
+    With prefix, only deletes files whose name starts with the prefix.
+
+    Only deletes regular files, not directories.
+    """
+    import os
+
+    workspace = "/workspace"
+    if not os.path.isdir(workspace):
+        return {"error": "Workspace directory not found", "deleted": []}
+    deleted = []
+    errors = []
+    try:
+        for name in os.listdir(workspace):
+            path = os.path.join(workspace, name)
+            if not os.path.isfile(path):
+                continue
+            if prefix and not name.startswith(prefix):
+                continue
+            try:
+                os.remove(path)
+                deleted.append(name)
+            except Exception as e:
+                errors.append({"file": name, "error": str(e)})
+    except Exception as e:
+        return {"error": str(e), "deleted": deleted}
+    return {"deleted_count": len(deleted), "deleted": deleted, "errors": errors}

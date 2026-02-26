@@ -380,3 +380,31 @@ class CCAClient:
                 span.set_attribute("cca.cleanup_response", resp.text[:200])
             except Exception as e:
                 span.set_attribute("cca.cleanup_status", f"failed: {e}")
+
+    def list_workspace_files(self) -> Dict[str, Any]:
+        """GET /workspace/files — list files in /workspace."""
+        with self.tracer.start_as_current_span("cca.list_workspace"):
+            resp = self._client.get(
+                f"{self.base_url}/workspace/files", timeout=TIMEOUT_DIAGNOSTIC
+            )
+            return resp.json()
+
+    def clean_workspace_files(self, prefix: str = "") -> Dict[str, Any]:
+        """DELETE /workspace/files — remove files from /workspace.
+
+        Without prefix, deletes ALL files. With prefix, only matching.
+        """
+        with self.tracer.start_as_current_span("cca.clean_workspace") as span:
+            span.set_attribute("cca.cleanup_prefix", prefix)
+            params = {"prefix": prefix} if prefix else {}
+            resp = self._client.request(
+                "DELETE",
+                f"{self.base_url}/workspace/files",
+                params=params,
+                timeout=TIMEOUT_DIAGNOSTIC,
+            )
+            data = resp.json()
+            span.set_attribute(
+                "cca.cleanup_deleted", data.get("deleted_count", 0)
+            )
+            return data

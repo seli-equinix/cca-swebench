@@ -33,7 +33,7 @@ from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
-from .cca_client import CCAClient
+from .cca_client import CCAClient, TIMEOUT_DIAGNOSTIC
 from .evaluators import post_deferred_annotations
 
 log = logging.getLogger(__name__)
@@ -261,3 +261,55 @@ def unique_name():
 def unique_session():
     """Generate a unique session ID."""
     return f"test-{uuid.uuid4().hex[:12]}"
+
+
+# ==================== Session-Level Cleanup ====================
+
+
+@pytest.fixture(scope="session", autouse=True)
+def session_cleanup(cca):
+    """Clean up stale test users and workspace files after all tests.
+
+    Runs AFTER all tests complete. Sweeps any test users (display_name
+    starts with "TestUser_" or common test prefixes) and workspace files
+    that were left behind by failing tests.
+
+    Individual tests still do their own cleanup in finally: blocks.
+    This is the safety net for when tests crash mid-execution.
+    """
+    yield  # All tests run here
+
+    log.info("=== Session cleanup: sweeping stale test data ===")
+
+    # 1. Delete stale test users
+    try:
+        users_data = cca.list_users()
+        test_prefixes = (
+            "TestUser_", "SkillUser_", "AliasUser_", "RmAlias_",
+            "RmSkill_", "FactUser_", "PrefUser_", "DelUser_",
+            "UpdateUser_", "ViewUser_", "ListUser_",
+        )
+        for user in users_data.get("users", []):
+            name = user.get("display_name", "")
+            if any(name.startswith(p) for p in test_prefixes):
+                user_id = user.get("user_id", "")
+                if user_id:
+                    try:
+                        cca._client.delete(
+                            f"{cca.base_url}/users/{user_id}",
+                            timeout=TIMEOUT_DIAGNOSTIC,
+                        )
+                        log.info("Cleaned stale test user: %s (%s)", name, user_id)
+                    except Exception as e:
+                        log.warning("Failed to clean user %s: %s", name, e)
+    except Exception as e:
+        log.warning("Session cleanup: failed to list users: %s", e)
+
+    # 2. Clean workspace files
+    try:
+        result = cca.clean_workspace_files()
+        deleted = result.get("deleted_count", 0)
+        if deleted:
+            log.info("Cleaned %d workspace files: %s", deleted, result.get("deleted", []))
+    except Exception as e:
+        log.warning("Session cleanup: failed to clean workspace: %s", e)

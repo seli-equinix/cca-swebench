@@ -322,8 +322,8 @@ class UserSessionManager:
         r"(?:^|\s)(?:i'?m|i am|this is|it'?s|my name is|call me)\s+([A-Za-z][A-Za-z0-9_-]{1,20})(?:\s|$|[.,!?])",
         # 3. "<name> here" (e.g. "Sean here")
         r"(?:^|\s)([A-Za-z][A-Za-z0-9_-]{1,20})\s+here(?:\s|$|[.,!?])",
-        # 4. Signature style: "-- <name>"
-        r"(?:^|\s)(?:\u2014|--|-)\s*([A-Za-z][A-Za-z0-9_-]{1,20})(?:\s|$)",
+        # 4. Signature style: "-- <name>" (must be near end of message)
+        r"(?:\u2014|--)\s*([A-Za-z][A-Za-z0-9_-]{1,20})\s*$",
         # 5. "they call me <name>"
         r"(?:^|\s)(?:they|people|everyone|folks)\s+call\s+me\s+([A-Za-z][A-Za-z0-9_-]{1,20})(?:\s|$|[.,!?])",
         # 6. "the name's <name>" / "name's <name>"
@@ -534,6 +534,46 @@ class UserSessionManager:
         "about",
         "into",
         "over",
+        # action verbs (commonly appear after em dashes)
+        "remove",
+        "delete",
+        "update",
+        "create",
+        "add",
+        "edit",
+        "fix",
+        "show",
+        "list",
+        "write",
+        "read",
+        "run",
+        "stop",
+        "start",
+        "check",
+        "get",
+        "set",
+        "find",
+        "search",
+        "install",
+        "build",
+        "deploy",
+        "send",
+        "make",
+        "use",
+        "try",
+        "open",
+        "close",
+        "save",
+        "load",
+        "merge",
+        "split",
+        "sort",
+        "copy",
+        "move",
+        "print",
+        "help",
+        "also",
+        "forget",
     }
 
     # ======================================================================
