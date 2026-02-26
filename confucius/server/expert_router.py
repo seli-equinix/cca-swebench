@@ -643,6 +643,8 @@ async def classify_request(
         # Post-classification guards: certain requests must NEVER be "direct"
         decision = _guard_coding_not_direct(decision, user_message)
         decision = _guard_search_not_direct(decision, user_message)
+        decision = _guard_action_not_direct(decision, user_message)
+        decision = _guard_copout_not_direct(decision, user_message)
 
         user_info = f", user='{decision.detected_user_name}'" if decision.detected_user_name else ""
         logger.info(
@@ -708,12 +710,20 @@ _SEARCH_PATTERNS = re.compile(
     r"|newest\s+(version|release|feature)"
     r"|up.to.date"
     r"|what.s\s+new\s+in"
-    r"|latest\s+\w+\s+news"
+    # "biggest/top/major/important AI news", "latest X news"
+    r"|(latest|biggest|top|major|important)\s+(\w+\s+)?news"
+    # "What's the latest X" (contraction-safe)
+    r"|what.s\s+the\s+(latest|newest|current|most\s+recent)"
+    # Explicit search/lookup language
     r"|search\s+(for|the\s+web|online)"
     r"|look\s+up"
     r"|find\s+(out|me|information)"
-    r"|what\s+are\s+the\s+latest"
-    r"|what\s+is\s+the\s+latest"
+    r"|what\s+are\s+the\s+(latest|newest|recent)"
+    r"|what\s+is\s+the\s+(latest|newest|current)"
+    # Temporal signals — "this week", "give me links"
+    r"|this\s+(week|month|year).s"
+    r"|give\s+me\s+(links|sources|urls|references)"
+    r"|show\s+me\s+(links|sources|urls|references)"
     r")\b",
     re.IGNORECASE,
 )
@@ -739,6 +749,97 @@ def _guard_search_not_direct(
         decision.direct_answer = ""
         if decision.estimated_steps < 3:
             decision.estimated_steps = 3
+        return decision
+
+    return decision
+
+
+# Patterns that require shell execution, file ops, or network access
+_ACTION_PATTERNS = re.compile(
+    r"\b("
+    r"download\s+(this|the|a|that|my)?\s*(file|page|image|document|url|content)"
+    r"|upload\s+(this|the|a|that|my)?\s*(file|image|document)"
+    r"|fetch\s+(this|the|a|that)?\s*(url|page|file|content)"
+    r"|curl\s+"
+    r"|wget\s+"
+    r"|run\s+(this|the|a|that)?\s*(command|script|code|query)"
+    r"|execute\s+(this|the|a|that)?\s*(command|script|code|query)"
+    r"|install\s+(this|the|a)?\s*(package|module|library|dependency)"
+    r"|connect\s+to"
+    r"|ssh\s+to|ssh\s+into"
+    r"|ping\s+"
+    r"|transfer\s+"
+    r")\b"
+    # Messages containing non-http URLs (ftp://, file://, ssh://, scp://)
+    r"|(?:ftp|file|ssh|scp)://\S+"
+    # "download ... for me" phrasing
+    r"|\bdownload\b.*\bfor\s+me\b",
+    re.IGNORECASE,
+)
+
+
+def _guard_action_not_direct(
+    decision: RouteDecision, user_message: str
+) -> RouteDecision:
+    """Override direct→coder if message requires execution or network access.
+
+    Requests like "download this file", "run this command", or messages
+    containing ftp:// URLs need shell tools — Functionary can't help.
+    """
+    if decision.expert != ExpertType.DIRECT:
+        return decision
+
+    if _ACTION_PATTERNS.search(user_message):
+        logger.warning(
+            "Router guard: overriding direct→coder for action request: %s",
+            user_message[:80],
+        )
+        decision.expert = ExpertType.CODER
+        decision.direct_answer = ""
+        if decision.estimated_steps < 5:
+            decision.estimated_steps = 5
+        return decision
+
+    return decision
+
+
+# Patterns in Functionary's direct answer that indicate a cop-out refusal
+_COPOUT_PATTERNS = re.compile(
+    r"(i'?m sorry.{0,20}(can'?t|cannot|unable|don'?t have)"
+    r"|i cannot\b"
+    r"|i'?m unable\b"
+    r"|i don'?t have (access|the ability|real-?time)"
+    r"|beyond my (ability|capabilit)"
+    r"|not (able|possible) (for me |to )"
+    r"|as an ai.{0,20}(can'?t|cannot|unable)"
+    r"|i lack the (ability|tools|access))",
+    re.IGNORECASE,
+)
+
+
+def _guard_copout_not_direct(
+    decision: RouteDecision, _user_message: str
+) -> RouteDecision:
+    """Override direct if the 'answer' is actually a refusal.
+
+    When Functionary's direct answer says "I'm sorry, I can't..." or
+    "I don't have access to real-time data", the 80B agent with tools
+    can actually try.
+    """
+    if decision.expert != ExpertType.DIRECT:
+        return decision
+    if not decision.direct_answer:
+        return decision
+
+    if _COPOUT_PATTERNS.search(decision.direct_answer):
+        logger.warning(
+            "Router guard: direct answer is a cop-out, re-routing to coder: %s",
+            decision.direct_answer[:80],
+        )
+        decision.expert = ExpertType.CODER
+        decision.direct_answer = ""
+        if decision.estimated_steps < 5:
+            decision.estimated_steps = 5
         return decision
 
     return decision
