@@ -409,6 +409,10 @@ CRITICAL — answer_directly restrictions:
 - These are ALWAYS coding tasks → route_to_coder, even if they seem simple.
 - answer_directly is ONLY for pure knowledge questions with no code output \
 (e.g., "What is the capital of France?", "Explain what a mutex is").
+- NEVER use answer_directly for questions about "latest", "recent", "current", \
+"newest", "up-to-date", or "news". These require web search → route_to_search.
+- Questions like "What is the latest version of X?" or "What are the latest \
+AI news?" ALWAYS need web search because your training data may be outdated.
 
 Disambiguation:
 - Coder vs infrastructure: Docker/containers/services/nodes → infrastructure; \
@@ -636,8 +640,9 @@ async def classify_request(
         if decision.greeting_detected:
             span.set_attribute("cca.router.greeting", True)
 
-        # Post-classification guard: coding requests must NEVER be "direct"
+        # Post-classification guards: certain requests must NEVER be "direct"
         decision = _guard_coding_not_direct(decision, user_message)
+        decision = _guard_search_not_direct(decision, user_message)
 
         user_info = f", user='{decision.detected_user_name}'" if decision.detected_user_name else ""
         logger.info(
@@ -689,6 +694,51 @@ def _guard_coding_not_direct(
         decision.direct_answer = ""
         if decision.estimated_steps < 5:
             decision.estimated_steps = 5
+        return decision
+
+    return decision
+
+
+# Patterns that indicate a web search is needed — NEVER answer directly
+_SEARCH_PATTERNS = re.compile(
+    r"\b("
+    r"latest\s+(version|release|update|news|development|announcement)"
+    r"|recent\s+(news|update|development|release|change|announcement)"
+    r"|current\s+(version|release|status|state)"
+    r"|newest\s+(version|release|feature)"
+    r"|up.to.date"
+    r"|what.s\s+new\s+in"
+    r"|latest\s+\w+\s+news"
+    r"|search\s+(for|the\s+web|online)"
+    r"|look\s+up"
+    r"|find\s+(out|me|information)"
+    r"|what\s+are\s+the\s+latest"
+    r"|what\s+is\s+the\s+latest"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def _guard_search_not_direct(
+    decision: RouteDecision, user_message: str
+) -> RouteDecision:
+    """Override direct→search if the message needs current information.
+
+    Questions about "latest", "recent", "current" versions/news
+    require web search — the model's training data may be outdated.
+    """
+    if decision.expert != ExpertType.DIRECT:
+        return decision
+
+    if _SEARCH_PATTERNS.search(user_message):
+        logger.warning(
+            "Router guard: overriding direct→search for recency query: %s",
+            user_message[:80],
+        )
+        decision.expert = ExpertType.SEARCH
+        decision.direct_answer = ""
+        if decision.estimated_steps < 3:
+            decision.estimated_steps = 3
         return decision
 
     return decision
