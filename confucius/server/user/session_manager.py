@@ -733,8 +733,9 @@ class UserSessionManager:
         if self._embedding_func is not None:
             await self._embedding_func.close()
             self._embedding_func = None
-        # AsyncQdrantClient auto-closes; no manual close needed
-        self._qdrant = None
+        if self._qdrant is not None:
+            await self._qdrant.close()
+            self._qdrant = None
         self._initialized = False
 
     # ======================================================================

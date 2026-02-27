@@ -448,6 +448,9 @@ class TestManageProfileDelete:
 
             user_after = cca.find_user_by_name(name)
             trace_test.set_attribute("cca.test.user_deleted", user_after is None)
+            assert user_after is None, (
+                f"Profile for '{name}' still exists in Qdrant after deletion request"
+            )
         finally:
             # Cleanup if agent refused deletion
             cca.cleanup_test_user(name)

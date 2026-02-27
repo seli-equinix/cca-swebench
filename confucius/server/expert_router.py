@@ -22,6 +22,7 @@ Architecture:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -445,24 +446,27 @@ ALWAYS call exactly one function. Never respond with plain text."""
 # ========================= Classifier =========================
 
 
-# Module-level shared client (initialized lazily)
+# Module-level shared client (initialized lazily, guarded by lock)
 _client: Optional[httpx.AsyncClient] = None
+_client_lock = asyncio.Lock()
 
 
 async def _get_client() -> httpx.AsyncClient:
     """Get or create the shared HTTP client."""
     global _client
-    if _client is None or _client.is_closed:
-        _client = httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=5.0))
-    return _client
+    async with _client_lock:
+        if _client is None or _client.is_closed:
+            _client = httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=5.0))
+        return _client
 
 
 async def close_client() -> None:
     """Close the shared HTTP client (call on shutdown)."""
     global _client
-    if _client and not _client.is_closed:
-        await _client.aclose()
-        _client = None
+    async with _client_lock:
+        if _client and not _client.is_closed:
+            await _client.aclose()
+            _client = None
 
 
 async def classify_request(

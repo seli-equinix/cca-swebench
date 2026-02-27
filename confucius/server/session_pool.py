@@ -90,13 +90,13 @@ class SessionPool:
             else:
                 entry = self._sessions[session_id]
 
-        # Inject fresh IO for this request
+        # Acquire per-session lock BEFORE mutating entry state.
+        # This prevents two concurrent requests for the same session
+        # from overwriting each other's IO adapter.
+        await entry.lock.acquire()
         entry.cf.io = io
         entry.last_used = time.time()
         entry.request_count += 1
-
-        # Acquire per-session lock (blocks concurrent requests to same session)
-        await entry.lock.acquire()
         return entry
 
     async def release(self, session_id: str) -> None:

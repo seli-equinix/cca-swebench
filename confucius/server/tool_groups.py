@@ -215,11 +215,13 @@ def build_extensions_for_route(
             # Extract session_mgr/session/critical_facts from the
             # pre-built UserToolsExtension (same session context).
             if user_extension is not None:
-                extensions.append(UserMemoryExtension(
-                    session_mgr=user_extension._session_mgr,  # type: ignore[attr-defined]
-                    session=user_extension._session,  # type: ignore[attr-defined]
-                    critical_facts=user_extension._critical_facts,  # type: ignore[attr-defined]
-                ))
+                from .user.tools_extension import UserToolsExtension
+                if isinstance(user_extension, UserToolsExtension):
+                    extensions.append(UserMemoryExtension(
+                        session_mgr=user_extension._session_mgr,
+                        session=user_extension._session,
+                        critical_facts=user_extension._critical_facts,
+                    ))
 
         elif group == ToolGroup.CODE_SEARCH:
             if backend_clients is not None:
