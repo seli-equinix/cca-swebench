@@ -114,7 +114,7 @@ class NoteObserver:
 
         # Backends (set during initialize())
         self._redis: Any = redis_client  # redis.asyncio.Redis (may be pre-injected)
-        self._qdrant: Any = None  # qdrant_client.QdrantClient
+        self._qdrant: Any = None  # qdrant_client.AsyncQdrantClient
         self._http_client: Any = None  # httpx.AsyncClient (for embeddings/non-LLM)
         self._openai_client: Any = None  # openai.AsyncOpenAI (for LLM — auto-traced)
         self._embedding_model: Optional[str] = None
@@ -158,9 +158,9 @@ class NoteObserver:
 
         # ---- Qdrant -----------------------------------------------------
         try:
-            from qdrant_client import QdrantClient
+            from qdrant_client import AsyncQdrantClient
 
-            self._qdrant = QdrantClient(url=self._qdrant_url)
+            self._qdrant = AsyncQdrantClient(url=self._qdrant_url)
             await self._ensure_collection()
             logger.info("NoteObserver connected to Qdrant (%s)", self._qdrant_url)
         except Exception as e:
@@ -199,10 +199,10 @@ class NoteObserver:
         try:
             from qdrant_client.http import models
 
-            collections = self._qdrant.get_collections().collections
+            collections = (await self._qdrant.get_collections()).collections
             names = [c.name for c in collections]
             if NOTES_COLLECTION not in names:
-                self._qdrant.create_collection(
+                await self._qdrant.create_collection(
                     collection_name=NOTES_COLLECTION,
                     vectors_config=models.VectorParams(
                         size=EMBEDDING_DIMS,
@@ -554,7 +554,7 @@ class NoteObserver:
                 )
                 points.append(point)
 
-            self._qdrant.upsert(
+            await self._qdrant.upsert(
                 collection_name=NOTES_COLLECTION,
                 points=points,
             )
@@ -619,7 +619,7 @@ class NoteObserver:
                     ]
                 )
 
-            response = self._qdrant.query_points(
+            response = await self._qdrant.query_points(
                 collection_name=NOTES_COLLECTION,
                 query=embeddings[0],
                 limit=n_results,
@@ -665,7 +665,7 @@ class NoteObserver:
 
         if self._qdrant is not None:
             try:
-                info = self._qdrant.get_collection(NOTES_COLLECTION)
+                info = await self._qdrant.get_collection(NOTES_COLLECTION)
                 stats["total_notes"] = info.points_count
 
                 # Scroll all notes to compute breakdowns
@@ -673,7 +673,7 @@ class NoteObserver:
                 notes_by_user: Dict[str, int] = {}
                 offset = None
                 while True:
-                    results, next_offset = self._qdrant.scroll(
+                    results, next_offset = await self._qdrant.scroll(
                         collection_name=NOTES_COLLECTION,
                         limit=100,
                         offset=offset,

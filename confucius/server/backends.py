@@ -53,7 +53,7 @@ class BackendClients:
         self._memgraph_port = memgraph_port
 
         # Backends (set during initialize())
-        self._qdrant: Any = None  # qdrant_client.QdrantClient
+        self._qdrant: Any = None  # qdrant_client.AsyncQdrantClient
         self._memgraph: Any = None  # neo4j.AsyncDriver
         self._redis: Any = None  # redis.asyncio.Redis (injected)
         self._http_client: Any = None  # httpx.AsyncClient (for embeddings)
@@ -77,11 +77,11 @@ class BackendClients:
 
         # ---- Qdrant ---------------------------------------------------
         try:
-            from qdrant_client import QdrantClient
+            from qdrant_client import AsyncQdrantClient
 
-            self._qdrant = QdrantClient(url=self._qdrant_url)
+            self._qdrant = AsyncQdrantClient(url=self._qdrant_url)
             # Quick check: list collections
-            self._qdrant.get_collections()
+            await self._qdrant.get_collections()
             logger.info("BackendClients: Qdrant connected (%s)", self._qdrant_url)
         except Exception as e:
             logger.warning("BackendClients: Qdrant unavailable: %s", e)
@@ -133,7 +133,9 @@ class BackendClients:
             await self._memgraph.close()
             self._memgraph = None
 
-        self._qdrant = None
+        if self._qdrant is not None:
+            await self._qdrant.close()
+            self._qdrant = None
         # Redis is shared with UserSessionManager — don't close it here
 
     # ------------------------------------------------------------------
@@ -142,7 +144,7 @@ class BackendClients:
 
     @property
     def qdrant(self) -> Any:
-        """Qdrant client (or None if unavailable)."""
+        """Async Qdrant client (or None if unavailable)."""
         return self._qdrant
 
     @property
@@ -164,6 +166,95 @@ class BackendClients:
     def available(self) -> bool:
         """True if at least Qdrant and embedding are available."""
         return self._qdrant is not None and self._embedding_model is not None
+
+    # ------------------------------------------------------------------
+    # Health check + auto-reconnect
+    # ------------------------------------------------------------------
+
+    async def health_check(self) -> dict[str, str]:
+        """Ping each backend. Reconnect if down. Returns status dict."""
+        status: dict[str, str] = {}
+
+        # ---- Qdrant ----
+        if self._qdrant is not None:
+            try:
+                await self._qdrant.get_collections()
+                status["qdrant"] = "ok"
+            except Exception:
+                logger.warning(
+                    "BackendClients: Qdrant connection lost — reconnecting"
+                )
+                try:
+                    await self._qdrant.close()
+                except Exception:
+                    pass
+                self._qdrant = None
+                status["qdrant"] = "down"
+
+        if self._qdrant is None and self._qdrant_url:
+            try:
+                from qdrant_client import AsyncQdrantClient
+
+                client = AsyncQdrantClient(url=self._qdrant_url)
+                await client.get_collections()
+                self._qdrant = client
+                status["qdrant"] = "reconnected"
+                logger.info("BackendClients: Qdrant reconnected")
+            except Exception:
+                status.setdefault("qdrant", "down")
+
+        # ---- Memgraph ----
+        if self._memgraph is not None:
+            try:
+                async with self._memgraph.session() as session:
+                    await session.run("RETURN 1")
+                status["memgraph"] = "ok"
+            except Exception:
+                logger.warning(
+                    "BackendClients: Memgraph connection lost — reconnecting"
+                )
+                try:
+                    await self._memgraph.close()
+                except Exception:
+                    pass
+                self._memgraph = None
+                status["memgraph"] = "down"
+
+        if self._memgraph is None and self._memgraph_host:
+            try:
+                from neo4j import AsyncGraphDatabase
+
+                uri = f"bolt://{self._memgraph_host}:{self._memgraph_port}"
+                driver = AsyncGraphDatabase.driver(
+                    uri,
+                    auth=None,
+                    max_connection_pool_size=5,
+                    connection_acquisition_timeout=10,
+                )
+                async with driver.session() as session:
+                    await session.run("RETURN 1")
+                self._memgraph = driver
+                status["memgraph"] = "reconnected"
+                logger.info("BackendClients: Memgraph reconnected")
+            except Exception:
+                status.setdefault("memgraph", "down")
+
+        # ---- Embedding ----
+        if self._http_client is not None:
+            try:
+                resp = await self._http_client.get(
+                    f"{self._embedding_url}/v1/models", timeout=10.0
+                )
+                resp.raise_for_status()
+                models = resp.json().get("data", [])
+                if models:
+                    self._embedding_model = models[0].get("id")
+                status["embedding"] = "ok"
+            except Exception:
+                self._embedding_model = None
+                status["embedding"] = "down"
+
+        return status
 
     # ------------------------------------------------------------------
     # Embedding

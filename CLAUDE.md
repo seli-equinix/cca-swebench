@@ -52,31 +52,31 @@ git submodule update --init --recursive nvidia-dgx-spark/cca
 
 ## Architecture Overview
 
-CCA has two modes: **CLI** (interactive REPL) and **HTTP** (Agent-as-a-Model endpoint). Both use the same agent engine. HTTP mode includes an **Expert Router** that classifies requests and selects the right entry.
+CCA runs as an **HTTP server** (Agent-as-a-Model endpoint) with an **Expert Router** that classifies requests and selects the right entry.
 
 ```
-CLI Mode (confucius code)               HTTP Mode (confucius serve --port 8500)
-  -> Confucius (session manager)           -> FastAPI app (app.py)
-    -> CodeAssistEntry (Analect)             -> SessionPool -> Confucius instances
-      -> AnthropicLLMOrchestrator              -> UserSessionManager (Redis + Qdrant)
-        -> Extensions (tools)                  -> Expert Router (Functionary on node5:8001)
-        -> AutoLLMManager -> LLM                 -> classify_request() → RouteDecision + user extraction
-                                                 -> HttpRoutedEntry (all routes)
-                                                 -> tool_groups.py builds extensions per route
-                                                 -> Direct answer / Clarification (no agent loop)
-                                                   -> AnthropicLLMOrchestrator (SAME engine)
-                                                   -> Route-specific extensions + UserMemoryExtension
-                                                   -> AutoLLMManager -> LLM (SAME)
+HTTP Mode (confucius --port 8500)
+  -> FastAPI app (app.py)
+    -> SessionPool -> Confucius instances
+      -> UserSessionManager (Redis + Qdrant)
+      -> Expert Router (Functionary on node5:8001)
+        -> classify_request() → RouteDecision + user extraction
+        -> HttpRoutedEntry (all routes)
+        -> tool_groups.py builds extensions per route
+        -> Direct answer / Clarification (no agent loop)
+          -> DualModelOrchestrator (iterative while-loop)
+          -> Route-specific extensions + UserMemoryExtension
+          -> AutoLLMManager -> LLM
 ```
 
-**Key principle**: The HTTP layer is a thin shell around the existing CLI agent. The `AnthropicLLMOrchestrator` IS the agent — it handles recursive tool calling, extension lifecycle, memory, thinking/reasoning, error recovery, and multi-step task execution. Both modes invoke it identically via `invoke_analect(Entry, EntryInput(question=...))`.
+**Key principle**: The HTTP layer is a thin shell around the agent engine. The `DualModelOrchestrator` (subclass of `AnthropicLLMOrchestrator`) IS the agent — it handles iterative tool calling, 8B/80B model routing, extension lifecycle, memory, thinking/reasoning, error recovery, and multi-step task execution.
 
 ### Core Components
 
 | Directory | Purpose | Key Classes |
 |-----------|---------|-------------|
-| `confucius/cli/` | CLI entry + `serve` command | `main.py` (Click: `confucius code`, `confucius serve`) |
-| `confucius/lib/` | Runtime bootstrap | `Confucius`, `run_entry_repl` |
+| `confucius/__main__.py` | HTTP server entry point | `main()` (argparse: `confucius --port 8500`) |
+| `confucius/lib/` | Runtime bootstrap | `Confucius` |
 | `confucius/analects/code/` | Code agent config | `CodeAssistEntry`, LLM params, allowed commands |
 | `confucius/analects/note_taker/` | Note-taking agent | Observes traces, persists long-term memory |
 | `confucius/core/` | Foundation layer | `Analect`, `AutoLLMManager`, memory, storage, config |
@@ -138,7 +138,7 @@ CCA runs as a persistent HTTP server on **Spark1 port 8500**, accepting OpenAI-c
 |----------|-------|
 | **URL** | `http://192.168.4.205:8500` |
 | **Health** | `http://192.168.4.205:8500/health` |
-| **Container** | `cca-http` on Spark1 |
+| **Container** | `cca` on Spark1 |
 | **Restart policy** | `unless-stopped` (survives reboots) |
 | **Underlying LLM** | Qwen3-Next-80B-A3B-Thinking-FP8 on Spark2:8000 |
 | **Model name in /v1/models** | Read from `config.toml` coder role (currently `/models/Qwen3-Next-80B-A3B-Thinking-FP8`) |
@@ -474,7 +474,7 @@ Traces are routed to named projects via the `openinference.project.name` resourc
 
 ### Phoenix Environment Variables
 
-Set in `cca-compose.yml` for `cca-http`:
+Set in `cca-compose.yml` for `cca`:
 ```yaml
 environment:
   - PHOENIX_COLLECTOR_ENDPOINT=http://192.168.4.204:4317  # OTel gRPC endpoint
@@ -497,7 +497,7 @@ environment:
 | User profiles (HTTP) | Qdrant `user_profiles` collection |
 | Critical facts (HTTP) | Redis `facts:{session_id}:{fact_type}` |
 
-Session IDs are UUID-based, auto-generated per run (CLI) or derived from request context (HTTP).
+Session IDs are UUID-based, derived from request context (X-Session-Id header, user field, or conversation hash).
 
 ---
 
@@ -511,53 +511,40 @@ cd nvidia-dgx-spark/cca
 # Build all images
 docker compose -f cca-compose.yml build
 
-# Run interactive REPL
-docker compose -f cca-compose.yml run --rm cca
+# Start HTTP server (runs as daemon)
+docker compose -f cca-compose.yml up -d cca
 
-# Run with source mounted (no rebuild for code changes)
-docker compose -f cca-compose.yml --profile dev run --rm cca-dev
+# View logs
+docker logs --tail 100 -f cca
+
+# Restart after code changes
+docker compose -f cca-compose.yml down cca
+docker compose -f cca-compose.yml build --no-cache cca
+docker compose -f cca-compose.yml up -d cca
 
 # Open shell for debugging
 docker compose -f cca-compose.yml run --rm cca bash
 
-# Start HTTP server (runs as daemon)
-docker compose -f cca-compose.yml up -d cca-http
-
-# View HTTP server logs
-docker logs --tail 100 -f cca-http
-
-# Restart HTTP server after code changes
-docker compose -f cca-compose.yml down cca-http
-docker compose -f cca-compose.yml build --no-cache cca-http
-docker compose -f cca-compose.yml up -d cca-http
-```
-
-### Deploy Script (from node5)
-
-```bash
-./nvidia-dgx-spark/cca/deploy-cca.sh build   # pull + build on Spark1
-./nvidia-dgx-spark/cca/deploy-cca.sh run     # interactive REPL on Spark1
-./nvidia-dgx-spark/cca/deploy-cca.sh dev     # source-mounted dev mode
-./nvidia-dgx-spark/cca/deploy-cca.sh shell   # bash inside container
+# Dev mode (source-mounted, no rebuild for code changes)
+docker compose -f cca-compose.yml --profile dev up -d cca-dev
 ```
 
 ### Docker Services
 
 | Service | Purpose | Profile | Port | Persistent |
 |---------|---------|---------|------|------------|
-| `cca` | Interactive REPL (production) | default | — | No (run --rm) |
-| `cca-dev` | Source-mounted for live editing | `dev` | — | No (run --rm) |
+| `cca` | **Agent-as-a-Model HTTP server** | default | **8500** | **Yes** (restart: unless-stopped) |
+| `cca-dev` | HTTP server with source-mounted code | `dev` | 8500 | No |
 | `cca-swebench` | SWE-bench runner | `swebench` | — | No (run --rm) |
-| `cca-http` | **Agent-as-a-Model HTTP server** | default | **8500** | **Yes** (restart: unless-stopped) |
 
-### CCA HTTP Deployment (from node5)
+### CCA Deployment (from node5)
 
 ```bash
 # Full redeploy cycle
 cd nvidia-dgx-spark/cca && git add <files> && git commit -m "msg" && git push origin main
 cd /home/seli/docker-swarm-stacks && git add nvidia-dgx-spark/cca && git commit -m "update CCA submodule" && git push
 sshpass -p 'Loveme-sex64' ssh seli@192.168.4.205 "cd docker-swarm-stacks && git pull && git submodule update --init nvidia-dgx-spark/cca"
-sshpass -p 'Loveme-sex64' ssh seli@192.168.4.205 "cd docker-swarm-stacks/nvidia-dgx-spark/cca && docker compose -f cca-compose.yml build --no-cache cca-http && docker compose -f cca-compose.yml down cca-http && docker compose -f cca-compose.yml up -d cca-http"
+sshpass -p 'Loveme-sex64' ssh seli@192.168.4.205 "cd docker-swarm-stacks/nvidia-dgx-spark/cca && docker compose -f cca-compose.yml build --no-cache cca && docker compose -f cca-compose.yml down cca && docker compose -f cca-compose.yml up -d cca"
 curl http://192.168.4.205:8500/health
 ```
 
@@ -600,8 +587,8 @@ CCA_WORKSPACE=/home/seli/code
 | `config.toml` | Model selection, provider switching, model prefixes, router config |
 | `confucius/server/app.py` | HTTP routes, session handling, expert routing, user identification flow |
 | `confucius/server/expert_router.py` | Router classification logic, tool definitions, system prompt |
-| `confucius/server/http_entry.py` | User context injection, extension list for coding tasks |
-| `confucius/server/http_infra_entry.py` | Infrastructure entry, expanded commands, cluster-aware prompt |
+| `confucius/server/http_routed_entry.py` | Unified entry for all routes, user context injection |
+| `confucius/server/tool_groups.py` | ToolGroup enum, ROUTE_TOOL_GROUPS, build_extensions_for_route() |
 | `confucius/server/user/session_manager.py` | User identification logic, Redis/Qdrant operations |
 | `confucius/server/user/tools_extension.py` | LLM-callable user tools (identify, remember, etc.) |
 | `confucius/analects/code/commands.py` | Add/remove allowed CLI commands (coding) |

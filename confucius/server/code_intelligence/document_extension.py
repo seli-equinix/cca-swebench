@@ -262,7 +262,7 @@ class DocumentToolsExtension(ToolUseExtension):
             return json.dumps({"error": f"Embedding failed: {e}"})
 
         # Ensure collection exists
-        self._ensure_ephemeral_collection(qdrant)
+        await self._ensure_ephemeral_collection(qdrant)
 
         # Build points
         from qdrant_client.models import PointStruct
@@ -286,7 +286,7 @@ class DocumentToolsExtension(ToolUseExtension):
             points.append(PointStruct(id=chunk_id, vector=vec, payload=payload))
 
         # Upsert
-        qdrant.upsert(collection_name=EPHEMERAL_COLLECTION, points=points)
+        await qdrant.upsert(collection_name=EPHEMERAL_COLLECTION, points=points)
 
         return json.dumps({
             "doc_id": doc_id,
@@ -313,7 +313,7 @@ class DocumentToolsExtension(ToolUseExtension):
             vectors = await self._backend_clients.embed([query])
             query_vector = vectors[0]
 
-            results = qdrant.query_points(
+            results = await qdrant.query_points(
                 collection_name=EPHEMERAL_COLLECTION,
                 query=query_vector,
                 query_filter=Filter(must=[
@@ -361,7 +361,7 @@ class DocumentToolsExtension(ToolUseExtension):
             docs: dict[str, dict] = {}
             offset = None
             while True:
-                results = qdrant.scroll(
+                results = await qdrant.scroll(
                     collection_name=EPHEMERAL_COLLECTION,
                     scroll_filter=Filter(must=[
                         FieldCondition(
@@ -430,7 +430,7 @@ class DocumentToolsExtension(ToolUseExtension):
             source_points = []
             offset = None
             while True:
-                results = qdrant.scroll(
+                results = await qdrant.scroll(
                     collection_name=EPHEMERAL_COLLECTION,
                     scroll_filter=Filter(must=[
                         FieldCondition(key="doc_id", match=MatchValue(value=doc_id)),
@@ -461,9 +461,9 @@ class DocumentToolsExtension(ToolUseExtension):
 
             # Ensure target collection exists
             try:
-                qdrant.get_collection(target_collection)
+                await qdrant.get_collection(target_collection)
             except Exception:
-                qdrant.create_collection(
+                await qdrant.create_collection(
                     collection_name=target_collection,
                     vectors_config=VectorParams(
                         size=EMBEDDING_DIMS,
@@ -498,7 +498,7 @@ class DocumentToolsExtension(ToolUseExtension):
                 ))
 
             # Upsert to target
-            qdrant.upsert(
+            await qdrant.upsert(
                 collection_name=target_collection,
                 points=promoted_points,
             )
@@ -522,13 +522,13 @@ class DocumentToolsExtension(ToolUseExtension):
     # Helpers
     # ------------------------------------------------------------------
 
-    def _ensure_ephemeral_collection(self, qdrant: Any) -> None:
+    async def _ensure_ephemeral_collection(self, qdrant: Any) -> None:
         """Ensure the ephemeral_docs collection exists."""
         try:
-            qdrant.get_collection(EPHEMERAL_COLLECTION)
+            await qdrant.get_collection(EPHEMERAL_COLLECTION)
         except Exception:
             from qdrant_client.models import VectorParams, Distance
-            qdrant.create_collection(
+            await qdrant.create_collection(
                 collection_name=EPHEMERAL_COLLECTION,
                 vectors_config=VectorParams(
                     size=EMBEDDING_DIMS,

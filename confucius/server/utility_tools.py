@@ -51,8 +51,24 @@ class UtilityToolsExtension(ToolUseExtension):
     enable_tool_use: bool = True
     included_in_system_prompt: bool = False
 
+    _http_client: Any
+
     class Config:
         arbitrary_types_allowed = True
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        object.__setattr__(self, "_http_client", None)
+
+    def _get_client(self) -> httpx.AsyncClient:
+        """Lazy shared httpx client — reused across all tool calls."""
+        if self._http_client is None:
+            object.__setattr__(
+                self,
+                "_http_client",
+                httpx.AsyncClient(follow_redirects=True),
+            )
+        return self._http_client
 
     @property
     async def tools(self) -> list[ant.ToolLike]:
@@ -279,9 +295,11 @@ class UtilityToolsExtension(ToolUseExtension):
         self, searxng_url: str, params: dict[str, Any], n_results: int,
     ) -> list[dict[str, Any]]:
         """Execute a single SearXNG query and return results."""
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.get(f"{searxng_url}/search", params=params)
-            resp.raise_for_status()
+        client = self._get_client()
+        resp = await client.get(
+            f"{searxng_url}/search", params=params, timeout=15.0
+        )
+        resp.raise_for_status()
         return resp.json().get("results", [])[:n_results]
 
     async def _handle_fetch_url(self, inp: dict[str, Any]) -> str:
@@ -320,12 +338,12 @@ class UtilityToolsExtension(ToolUseExtension):
 
         # Fetch
         try:
-            async with httpx.AsyncClient(
-                timeout=timeout, follow_redirects=True
-            ) as client:
-                resp = await client.get(
-                    url, headers={"User-Agent": "CCA/1.0"}
-                )
+            client = self._get_client()
+            resp = await client.get(
+                url,
+                headers={"User-Agent": "CCA/1.0"},
+                timeout=timeout,
+            )
         except httpx.HTTPError as e:
             return json.dumps({
                 "error": f"Fetch failed: {e}",

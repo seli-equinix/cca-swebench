@@ -226,28 +226,6 @@ class AnthropicLLMOrchestrator(LLMOrchestrator):
 
         return "\n".join(text_responses)
 
-    async def _process_messages(self, task: str, context: AnalectRunContext) -> None:
-        await super()._process_messages(task, context)
-
-        if self._tool_use_queue:
-            try:
-                await self._process_tool_use_queue(context)
-            except OrchestratorInterruption as exc:
-                await self._process_interruption(exc, context)
-            finally:
-                self._tool_use_queue.clear()
-
-            await self._process_messages(task, context)
-        else:
-            # Call the _on_process_tool_use_queue_complete hook which will raise an OrchestratorInterruption
-            # if the orcehstrator should be triggered again
-            # We do a try/except style here to match the behavior of the base orchestrator
-            try:
-                await self._on_process_tool_use_queue_complete(context)
-            except OrchestratorInterruption as exc:
-                await self._process_interruption(exc, context)
-                await self._process_messages(task, context)
-
     @property
     def _enabled_tool_use_extensions(self) -> list[ToolUseExtension]:
         return [

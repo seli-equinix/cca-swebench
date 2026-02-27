@@ -268,12 +268,47 @@ class UserToolsExtension(ToolUseExtension):
         )
         return json.dumps(result)
 
+    # Keys that route to structured profile operations (shared with UserMemoryExtension)
+    _SKILL_KEYS = {"skill", "skills", "add_skill"}
+    _ALIAS_KEYS = {"alias", "aliases", "add_alias", "nickname"}
+    _REMOVE_SKILL_KEYS = {"remove_skill", "remove_skills"}
+    _REMOVE_ALIAS_KEYS = {"remove_alias", "remove_aliases", "remove_nickname"}
+
     async def _handle_remember_fact(self, inp: dict) -> str:
         key = inp.get("key", "").strip()
         value = inp.get("value", "").strip()
         if not key or not value:
             return "Error: both key and value are required"
 
+        key_lower = key.lower()
+
+        # Route structured profile operations to proper methods
+        if self._session.identified and self._session.user_id:
+            if key_lower in self._SKILL_KEYS:
+                result = await self._session_mgr.add_user_skill(
+                    self._session.user_id, value
+                )
+                return json.dumps(result)
+
+            if key_lower in self._ALIAS_KEYS:
+                result = await self._session_mgr.add_user_alias(
+                    self._session.user_id, value
+                )
+                return json.dumps(result)
+
+            if key_lower in self._REMOVE_SKILL_KEYS:
+                result = await self._session_mgr.remove_user_skill(
+                    self._session.user_id, value
+                )
+                return json.dumps(result)
+
+            if key_lower in self._REMOVE_ALIAS_KEYS:
+                result = await self._session_mgr.remove_user_alias(
+                    self._session.user_id, value
+                )
+                return json.dumps(result)
+
+        # Default: store as generic fact
         success = await self._session_mgr.remember_user_fact(
             self._session, key, value
         )

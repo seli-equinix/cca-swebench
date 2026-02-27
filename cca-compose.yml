@@ -3,7 +3,7 @@
 #
 # Usage:
 #   Build:       docker compose -f cca-compose.yml build
-#   REPL:        docker compose -f cca-compose.yml run --rm cca
+#   Start:       docker compose -f cca-compose.yml up -d cca
 #   Shell:       docker compose -f cca-compose.yml run --rm cca bash
 #   SWE-bench:   docker compose -f cca-compose.yml run --rm cca-swebench
 #
@@ -13,42 +13,48 @@
 #   Fallback: OPENAI_API_KEY + OPENAI_BASE_URL env vars for default OpenAI endpoint.
 
 services:
-  # Interactive CCA agent (REPL mode)
+  # CCA HTTP server (Agent-as-a-Model Endpoint)
   cca:
     build:
       context: .
       dockerfile: Dockerfile
     image: cca:latest
     container_name: cca
-    stdin_open: true
-    tty: true
     env_file:
       - .env
     environment:
-      # Local vLLM as OpenAI-compatible backend
       - OPENAI_API_KEY=${OPENAI_API_KEY:-dummy}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-http://192.168.4.208:8000/v1}
-      # CCA config file (model selection, provider switching)
       - CCA_CONFIG_PATH=/etc/cca/config.toml
+      # User-awareness infrastructure (shared with MCP server)
+      - REDIS_URL=redis://:Loveme-sex64@192.168.4.205:6379/0
+      - QDRANT_URL=http://192.168.4.205:6333
+      - EMBEDDING_URL=http://192.168.4.205:8200
+      - SEARXNG_URL=http://192.168.4.205:8888
+      # Code intelligence backends
+      - MEMGRAPH_HOST=192.168.4.202
+      - MEMGRAPH_PORT=7687
+      # Phoenix observability (traces → Phoenix UI)
+      - PHOENIX_COLLECTOR_ENDPOINT=http://192.168.4.204:4317
+      - PHOENIX_PROJECT_NAME=cca-http
     network_mode: host
+    entrypoint: ["confucius", "--port", "8500"]
     volumes:
-      # Mount workspace for file operations
       - ${CCA_WORKSPACE:-/home/seli/code}:/workspace:rw
-      # Persist session data across runs
       - cca-sessions:/home/cca/.confucius
-      # CCA configuration (model profiles, provider switching)
       - ./config.toml:/etc/cca/config.toml:ro
+      # Indexable paths for code intelligence (read-only)
+      - /home/seli/docker-swarm-stacks:/home/seli/docker-swarm-stacks:ro
     working_dir: /workspace
+    restart: unless-stopped
 
-  # CCA dev container (source mounted for live editing)
+  # CCA dev container (source mounted for live editing, no rebuild needed)
   cca-dev:
     build:
       context: .
       dockerfile: Dockerfile
     image: cca:latest-dev
     container_name: cca-dev
-    stdin_open: true
-    tty: true
     profiles:
       - dev
     env_file:
@@ -57,7 +63,16 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY:-dummy}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-http://192.168.4.208:8000/v1}
       - CCA_CONFIG_PATH=/etc/cca/config.toml
+      - REDIS_URL=redis://:Loveme-sex64@192.168.4.205:6379/0
+      - QDRANT_URL=http://192.168.4.205:6333
+      - EMBEDDING_URL=http://192.168.4.205:8200
+      - SEARXNG_URL=http://192.168.4.205:8888
+      - MEMGRAPH_HOST=192.168.4.202
+      - MEMGRAPH_PORT=7687
+      - PHOENIX_COLLECTOR_ENDPOINT=http://192.168.4.204:4317
+      - PHOENIX_PROJECT_NAME=cca-dev
     network_mode: host
+    entrypoint: ["confucius", "--port", "8500"]
     volumes:
       - ${CCA_WORKSPACE:-/home/seli/code}:/workspace:rw
       - cca-sessions:/home/cca/.confucius
@@ -65,6 +80,7 @@ services:
       - ./confucius:/app/confucius:ro
       - ./scripts:/app/scripts:ro
       - ./config.toml:/etc/cca/config.toml:ro
+      - /home/seli/docker-swarm-stacks:/home/seli/docker-swarm-stacks:ro
     working_dir: /workspace
 
   # SWE-bench runner
@@ -88,41 +104,6 @@ services:
       - ${CCA_WORKSPACE:-/home/seli/code}:/workspace:rw
       - cca-sessions:/home/cca/.confucius
       - ./config.toml:/etc/cca/config.toml:ro
-
-  # CCA HTTP server (Agent-as-a-Model Endpoint)
-  cca-http:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: cca:latest
-    container_name: cca-http
-    env_file:
-      - .env
-    environment:
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-dummy}
-      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-http://192.168.4.208:8000/v1}
-      - CCA_CONFIG_PATH=/etc/cca/config.toml
-      # User-awareness infrastructure (shared with MCP server)
-      - REDIS_URL=redis://:Loveme-sex64@192.168.4.205:6379/0
-      - QDRANT_URL=http://192.168.4.205:6333
-      - EMBEDDING_URL=http://192.168.4.205:8200
-      - SEARXNG_URL=http://192.168.4.205:8888
-      # Code intelligence backends
-      - MEMGRAPH_HOST=192.168.4.202
-      - MEMGRAPH_PORT=7687
-      # Phoenix observability (traces → Phoenix UI)
-      - PHOENIX_COLLECTOR_ENDPOINT=http://192.168.4.204:4317
-      - PHOENIX_PROJECT_NAME=cca-http
-    network_mode: host
-    entrypoint: ["confucius", "serve", "--port", "8500"]
-    volumes:
-      - ${CCA_WORKSPACE:-/home/seli/code}:/workspace:rw
-      - cca-sessions:/home/cca/.confucius
-      - ./config.toml:/etc/cca/config.toml:ro
-      # Indexable paths for code intelligence (read-only)
-      - /home/seli/docker-swarm-stacks:/home/seli/docker-swarm-stacks:ro
-    working_dir: /workspace
-    restart: unless-stopped
 
 volumes:
   cca-sessions:

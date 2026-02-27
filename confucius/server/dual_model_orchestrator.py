@@ -304,107 +304,127 @@ class DualModelOrchestrator(AnthropicLLMOrchestrator):
     async def _process_messages(
         self, task: str, context: AnalectRunContext
     ) -> None:
-        """Override with two extra synthesis branches:
+        """Iterative loop with synthesis branches (no recursion).
 
-        1. 8B done → force 80B synthesis (existing: research → summary)
-        2. 80B done after tools → force summary (new: ensures the user
-           sees what files were created, code written, and test results
-           instead of just running commentary from tool iterations)
-
-        Branch order: tool_use_queue → 8B done → tool-work summary → normal end
+        Branches checked after each LLM call:
+        1. tool_use_queue → process tools → continue
+        2. 8B done → reset for 80B synthesis → continue
+        3. No tools called → nudge → continue
+        4. Tool work done, no synthesis → add synthesis prompt → continue
+        5. Done → run extension hooks → break
         """
-        # BaseOrchestrator: max_iterations check → get_root_tag() → LLM call
-        try:
-            await super(AnthropicLLMOrchestrator, self)._process_messages(
-                task, context
-            )
-        except Exception as e:
-            # Context overflow on the 8B → escalate to 80B (1M context)
-            if self._using_fast_model and "context length" in str(e):
-                logger.warning(
-                    "Dual-model: 8B context overflow — escalating to 80B: %s",
-                    e,
+        while True:
+            # BaseOrchestrator: max_iterations check → get_root_tag() → LLM call
+            try:
+                await super()._process_messages(task, context)
+            except Exception as e:
+                # Context overflow on the 8B → escalate to 80B (1M context)
+                if self._using_fast_model and "context length" in str(e):
+                    logger.warning(
+                        "Dual-model: 8B context overflow — escalating to 80B: %s",
+                        e,
+                    )
+                    self._force_primary = True
+                    self._last_tool_names = []
+                    continue
+                raise
+
+            if self._tool_use_queue:
+                # Standard: tools were called → process them → loop
+                try:
+                    await self._process_tool_use_queue(context)
+                except OrchestratorInterruption as exc:
+                    await self._process_interruption(exc, context)
+                finally:
+                    self._tool_use_queue.clear()
+                continue
+
+            elif self._using_fast_model:
+                # 8B finished research (no more tools) → force 80B synthesis.
+                # Reset stall detection so 80B can delegate back to 8B.
+                logger.info(
+                    "Dual-model: 8B research complete — forcing 80B synthesis"
                 )
-                self._force_primary = True
                 self._last_tool_names = []
-                await self._process_messages(task, context)
-                return
-            raise
+                self._repeated_context_count = 0
+                self._last_fast_context_hash = 0
+                continue
 
-        if self._tool_use_queue:
-            # Standard: tools were called → process them → recurse
-            try:
-                await self._process_tool_use_queue(context)
-            except OrchestratorInterruption as exc:
-                await self._process_interruption(exc, context)
-            finally:
-                self._tool_use_queue.clear()
-            await self._process_messages(task, context)
-
-        elif self._using_fast_model:
-            # 8B finished research (no more tools) → force 80B synthesis.
-            # Reset stall detection so 80B can delegate back to 8B.
-            logger.info(
-                "Dual-model: 8B research complete — forcing 80B synthesis"
-            )
-            self._last_tool_names = []
-            self._repeated_context_count = 0
-            self._last_fast_context_hash = 0
-            await self._process_messages(task, context)
-
-        elif (
-            not self._had_tool_iterations
-            and not self._tool_nudge_done
-            and self._num_iterations <= 2
-        ):
-            # Model described intent but didn't call tools on first turn.
-            # Qwen3 sometimes generates markdown code blocks instead of
-            # making tool calls.  Nudge it once to actually use tools.
-            logger.info(
-                "Dual-model: no tools called after %d iterations "
-                "— nudging model to use tools",
-                self._num_iterations,
-            )
-            self._tool_nudge_done = True
-            context.memory_manager.add_messages([
-                CfMessage(
-                    type=cf.MessageType.HUMAN,
-                    content=(
-                        "You have bash and file editing tools available. "
-                        "Don't just describe what you'll do — use the tools "
-                        "to actually execute the code. Start now."
-                    ),
+            elif (
+                not self._had_tool_iterations
+                and not self._tool_nudge_done
+                and self._num_iterations <= 2
+            ):
+                # Model described intent but didn't call tools on first turn.
+                # Qwen3 sometimes generates markdown code blocks instead of
+                # making tool calls.  Nudge it once to actually use tools.
+                logger.info(
+                    "Dual-model: no tools called after %d iterations "
+                    "— nudging model to use tools",
+                    self._num_iterations,
                 )
-            ])
-            await self._process_messages(task, context)
+                self._tool_nudge_done = True
+                context.memory_manager.add_messages([
+                    CfMessage(
+                        type=cf.MessageType.HUMAN,
+                        content=(
+                            "You have bash and file editing tools available. "
+                            "Don't just describe what you'll do — use the tools "
+                            "to actually execute the code. Start now."
+                        ),
+                        additional_kwargs={"__synthetic__": True},
+                    )
+                ])
+                continue
 
-        elif self._had_tool_iterations and not self._synthesis_done:
-            # 80B finished after tool work but hasn't summarized yet.
-            # Force one more 80B call to produce a clear summary of
-            # what was accomplished (files created, code written, test results).
-            logger.info(
-                "Dual-model: tool work complete — forcing synthesis summary"
-            )
-            self._synthesis_done = True
-            context.memory_manager.add_messages([
-                CfMessage(
-                    type=cf.MessageType.HUMAN,
-                    content=(
-                        "Now give a clear summary of what you accomplished: "
-                        "what files you created or modified, the key code, "
-                        "and the results of any tests. Show the final code."
-                    ),
+            elif self._had_tool_iterations and not self._synthesis_done:
+                # 80B finished after tool work but hasn't summarized yet.
+                # Force one more 80B call to produce a clear summary of
+                # what was accomplished (files created, code written, test results).
+                logger.info(
+                    "Dual-model: tool work complete — forcing synthesis summary"
                 )
-            ])
-            await self._process_messages(task, context)
+                self._synthesis_done = True
+                context.memory_manager.add_messages([
+                    CfMessage(
+                        type=cf.MessageType.HUMAN,
+                        content=(
+                            "Now give a clear summary of what you accomplished: "
+                            "what files you created or modified, the key code, "
+                            "and the results of any tests. Show the final code."
+                        ),
+                        additional_kwargs={"__synthetic__": True},
+                    )
+                ])
+                continue
 
-        else:
-            # 80B finished — normal end, run extension hooks
-            try:
-                await self._on_process_tool_use_queue_complete(context)
-            except OrchestratorInterruption as exc:
-                await self._process_interruption(exc, context)
-                await self._process_messages(task, context)
+            else:
+                # 80B finished — normal end, run extension hooks
+                try:
+                    await self._on_process_tool_use_queue_complete(context)
+                except OrchestratorInterruption as exc:
+                    await self._process_interruption(exc, context)
+                    continue
+                # Clean up synthetic messages before session persists
+                self._strip_synthetic_messages(context)
+                break
+
+    def _strip_synthetic_messages(self, context: AnalectRunContext) -> None:
+        """Remove synthetic HUMAN messages so they don't persist to future requests.
+
+        The tool nudge and synthesis prompts are injected as HUMAN messages
+        (required for the LLM to process them), but they should not appear
+        in the next HTTP request's conversation history.
+        """
+        memory = context.memory_manager.memory
+        original = len(memory.messages)
+        memory.messages = [
+            m for m in memory.messages
+            if not m.additional_kwargs.get("__synthetic__")
+        ]
+        removed = original - len(memory.messages)
+        if removed:
+            logger.debug("Stripped %d synthetic messages from memory", removed)
 
     # ── Tool tracking + quality gate ─────────────────────────────
 

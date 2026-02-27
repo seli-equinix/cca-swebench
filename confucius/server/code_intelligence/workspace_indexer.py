@@ -203,7 +203,7 @@ class WorkspaceIndexer:
             # Scroll through all CCA-sourced points to get file_path → content_hash
             offset = None
             while True:
-                results = qdrant.scroll(
+                results = await qdrant.scroll(
                     collection_name=COLLECTION_NAME,
                     scroll_filter=Filter(
                         must=[
@@ -413,7 +413,7 @@ class WorkspaceIndexer:
         try:
             from qdrant_client.models import Filter, FieldCondition, MatchValue
 
-            qdrant.delete(
+            await qdrant.delete(
                 collection_name=COLLECTION_NAME,
                 points_selector=Filter(
                     must=[
@@ -447,9 +447,9 @@ class WorkspaceIndexer:
 
         # Ensure collection exists
         try:
-            qdrant.get_collection(COLLECTION_NAME)
+            await qdrant.get_collection(COLLECTION_NAME)
         except Exception:
-            qdrant.create_collection(
+            await qdrant.create_collection(
                 collection_name=COLLECTION_NAME,
                 vectors_config=VectorParams(
                     size=EMBEDDING_DIMS,
@@ -474,7 +474,7 @@ class WorkspaceIndexer:
         batch_size = 100
         for i in range(0, len(points), batch_size):
             batch = points[i : i + batch_size]
-            qdrant.upsert(
+            await qdrant.upsert(
                 collection_name=COLLECTION_NAME,
                 points=batch,
             )

@@ -58,6 +58,6 @@ RUN useradd --create-home --shell /bin/bash --uid 1000 cca && \
 
 USER cca
 
-# Default: interactive REPL
+# Default: HTTP server
 ENTRYPOINT ["confucius"]
-CMD ["code", "--verbose"]
+CMD ["--port", "8500"]

@@ -24,6 +24,7 @@ def build_user_context(
     user: UserProfile,
     critical_facts: str = "",
     identification_result: Optional[dict] = None,
+    full_user_tools: bool = False,
 ) -> str:
     """Build personalization context for an identified user.
 
@@ -34,6 +35,8 @@ def build_user_context(
         user: The identified user's profile.
         critical_facts: Formatted critical facts string (IPs, passwords, etc.).
         identification_result: Optional identification result dict.
+        full_user_tools: If True, document all 6 tools (USER route).
+            If False, only document the 3 tools available on other routes.
 
     Returns:
         Multi-line string to prepend to the system prompt.
@@ -69,6 +72,20 @@ def build_user_context(
 """)
 
     # Personalization instructions for the LLM
+    tool_docs = """
+TOOL USAGE — Call these tools when appropriate:
+- **remember_user_fact**: When user shares important info. Call IMMEDIATELY — don't wait.
+  - General facts: key="employer", value="Acme Corp"
+  - Skills: key="skill", value="Python" (adds to structured skills list)
+  - Aliases: key="alias", value="seli" (adds to structured aliases list)
+  - Remove skill: key="remove_skill", value="Java"
+  - Remove alias: key="remove_alias", value="old_name"
+- **update_user_preference**: When user says they prefer certain response styles."""
+
+    if full_user_tools:
+        tool_docs += """
+- **identify_user**: When user says a different name or identity changes."""
+
     personalization = f"""
 ═══════════════════════════════════════════════════
     RECOGNIZED USER - BE NATURAL AND FRIENDLY
@@ -82,28 +99,22 @@ IMPORTANT - NATURAL CONVERSATION STYLE:
 - DO say natural things like "Good to see you again!", "I remember we worked on..."
 - Reference their past work/projects naturally as if you genuinely remember them
 - If you remember facts about them, weave them in conversationally
-
-TOOL USAGE — Call these tools when appropriate:
-- **remember_user_fact**: When user shares important info. Call IMMEDIATELY — don't wait.
-  - General facts: key="employer", value="Acme Corp"
-  - Skills: key="skill", value="Python" (adds to structured skills list)
-  - Aliases: key="alias", value="seli" (adds to structured aliases list)
-  - Remove skill: key="remove_skill", value="Java"
-  - Remove alias: key="remove_alias", value="old_name"
-- **update_user_preference**: When user says they prefer certain response styles.
-- **identify_user**: When user says a different name or identity changes.
+{tool_docs}
 """
     sections.append(personalization)
 
     return "\n".join(sections)
 
 
-def build_anonymous_context() -> str:
+def build_anonymous_context(full_user_tools: bool = False) -> str:
     """Build context for an unidentified user.
 
-    Tells the LLM about available user identification tools.
+    Args:
+        full_user_tools: If True, document all identification tools (USER route).
+            If False, only mention get_user_context (other routes).
     """
-    return """
+    if full_user_tools:
+        return """
 ═══════════════════════════════════════════════════
            USER IDENTIFICATION AVAILABLE
 ═══════════════════════════════════════════════════
@@ -114,6 +125,13 @@ This user hasn't been identified yet. You have tools to help:
 - **manage_user_profile**: View, update, or delete user profile data
 
 Once identified, you'll have access to their saved facts and preferences!
+"""
+    return """
+═══════════════════════════════════════════════════
+           UNIDENTIFIED USER
+═══════════════════════════════════════════════════
+This user hasn't been identified yet. If they introduce themselves,
+use **remember_user_fact** to save any details they share.
 """
 
 

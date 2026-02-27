@@ -51,6 +51,7 @@ class ToolGroup(str, Enum):
     CODE_SEARCH = "code_search"  # CodeSearchExtension (3 tools: search_codebase, search_knowledge, index_workspace)
     GRAPH = "graph"         # GraphToolsExtension (3 tools: query_call_graph, find_orphan_functions, analyze_dependencies)
     DOCUMENT = "document"   # DocumentToolsExtension (4 tools: upload_document, search_documents, list_session_docs, promote_doc_to_knowledge)
+    NOTES = "notes"         # NoteSearchExtension (1 tool: search_notes)
     # Future groups — uncomment as extensions are ported:
     # VISION = "vision"     # VisionToolsExtension (1 tool)
     # RULES = "rules"       # RulesToolsExtension (4 tools)
@@ -76,6 +77,7 @@ ROUTE_TOOL_GROUPS: Dict[ExpertType, List[ToolGroup]] = {
         ToolGroup.CODE_SEARCH,
         ToolGroup.GRAPH,
         ToolGroup.DOCUMENT,
+        ToolGroup.NOTES,
     ],
     ExpertType.INFRASTRUCTURE: [
         ToolGroup.PLANNER,
@@ -87,6 +89,7 @@ ROUTE_TOOL_GROUPS: Dict[ExpertType, List[ToolGroup]] = {
         ToolGroup.CODE_SEARCH,
         ToolGroup.GRAPH,
         ToolGroup.DOCUMENT,
+        ToolGroup.NOTES,
     ],
     ExpertType.SEARCH: [
         ToolGroup.WEB,
@@ -95,6 +98,7 @@ ROUTE_TOOL_GROUPS: Dict[ExpertType, List[ToolGroup]] = {
         ToolGroup.USER_MEMORY,
         ToolGroup.CODE_SEARCH,
         ToolGroup.DOCUMENT,
+        ToolGroup.NOTES,
     ],
     ExpertType.PLANNER: [
         ToolGroup.PLANNER,
@@ -244,6 +248,14 @@ def build_extensions_for_route(
                 extensions.append(DocumentToolsExtension(
                     backend_clients=backend_clients,
                     session_id=session_id,
+                    user_id=user_id,
+                ))
+
+        elif group == ToolGroup.NOTES:
+            if backend_clients is not None and user_id:
+                from .note_search_extension import NoteSearchExtension
+                extensions.append(NoteSearchExtension(
+                    backend_clients=backend_clients,
                     user_id=user_id,
                 ))
 

@@ -3,19 +3,14 @@
 
 """FastAPI application for the CCA Agent-as-a-Model Endpoint.
 
-Accepts OpenAI-compatible /v1/chat/completions requests, runs the SAME
-orchestrator and full agent loop as CLI mode, and returns responses
-formatted as OpenAI chat completions — with user identification and
-personalization from the ported MCP user-awareness system.
+Accepts OpenAI-compatible /v1/chat/completions requests, runs the full
+agent loop via DualModelOrchestrator, and returns responses formatted as
+OpenAI chat completions — with user identification, personalization, and
+code intelligence from shared infrastructure.
 
-Both CLI and HTTP mode use the same agent path:
-    invoke_analect(Entry, EntryInput(question=...))
-      -> impl() -> build extensions -> AnthropicLLMOrchestrator -> full agent loop
-
-The only differences in HTTP mode:
-1. HttpRoutedEntry dynamically builds extensions per route via tool_groups.py
-2. HttpIOInterface captures output instead of printing to terminal
-3. User identification happens server-side (router extraction + regex fallback)
+Request flow:
+    /v1/chat/completions → classify_request() → HttpRoutedEntry
+      → build_extensions_for_route() → DualModelOrchestrator → full agent loop
 """
 
 from __future__ import annotations
@@ -160,16 +155,22 @@ async def lifespan(app: FastAPI):  # type: ignore[type-arg]
     # Initialise session pool (manages Confucius instances)
     session_pool = SessionPool(max_sessions=50, session_ttl=3600)
 
-    # Start background cleanup task
+    # Start background tasks
     cleanup_task = asyncio.create_task(_cleanup_loop())
+    health_task = asyncio.create_task(_backend_health_loop())
 
     logger.info(f"CCA HTTP server ready — serving as model: {SERVED_MODEL_NAME}")
     yield
 
     # Shutdown
     cleanup_task.cancel()
+    health_task.cancel()
     try:
         await cleanup_task
+    except asyncio.CancelledError:
+        pass
+    try:
+        await health_task
     except asyncio.CancelledError:
         pass
 
@@ -193,6 +194,19 @@ async def _cleanup_loop() -> None:
                 logger.info(f"Cleaned up {evicted} expired sessions")
         except Exception as e:
             logger.warning(f"Session cleanup error: {e}")
+
+
+async def _backend_health_loop() -> None:
+    """Periodically check backend health and reconnect if needed."""
+    while True:
+        await asyncio.sleep(60)
+        if backend_clients:
+            try:
+                status = await backend_clients.health_check()
+                if any(v != "ok" for v in status.values()):
+                    logger.info("Backend health check: %s", status)
+            except Exception as e:
+                logger.warning("Backend health check error: %s", e)
 
 
 # ==================== FastAPI App ====================
@@ -284,6 +298,10 @@ async def _run_note_observer_with_context(
     Without this, the background task would create orphaned spans
     disconnected from the parent request trace.
     """
+    if not user or not getattr(user, "user_id", None):
+        logger.debug("Skipping note observer for anonymous request")
+        return
+
     token = attach_context(ctx)
     try:
         await observer.process(
@@ -444,6 +462,8 @@ async def _handle_chat_completions(
                         )
 
     # 6. Build user context for system prompt injection
+    # Only USER route has full identification tools (identify_user, infer_user, etc.)
+    is_user_route = route and route.expert == ExpertType.USER
     user_context = ""
     if user:
         # Get critical facts for this session
@@ -451,7 +471,8 @@ async def _handle_chat_completions(
             session_id
         )
         user_context = build_user_context(
-            user, critical_facts_str, id_result or None
+            user, critical_facts_str, id_result or None,
+            full_user_tools=is_user_route,
         )
         # Add router-identified hint so the 80B knows not to call identify tools
         if id_source == "router":
@@ -465,7 +486,7 @@ async def _handle_chat_completions(
             id_result.get("confidence", 0.0),
         )
     else:
-        user_context = build_anonymous_context()
+        user_context = build_anonymous_context(full_user_tools=is_user_route)
 
     # 6b. Enrich context with relevant past notes from Qdrant
     if note_observer and user and user.user_id and user_message:
@@ -905,6 +926,117 @@ async def notes_search(
         "user_id": user_id,
         "count": len(results),
         "notes": results,
+    }
+
+
+@app.delete("/v1/notes/cleanup")
+async def notes_cleanup() -> Dict[str, Any]:
+    """Delete anonymous and orphaned notes from the cca_notes collection.
+
+    - Anonymous: notes with null/missing user_id
+    - Orphaned: notes whose user_id no longer exists in user_profiles
+    """
+    if note_observer is None or note_observer._qdrant is None:
+        return {"error": "NoteObserver or Qdrant not available"}
+
+    from qdrant_client.http import models
+
+    anonymous_deleted = 0
+    orphaned_deleted = 0
+
+    # 1. Delete anonymous notes (null user_id)
+    try:
+        await note_observer._qdrant.delete(
+            collection_name="cca_notes",
+            points_selector=models.FilterSelector(
+                filter=models.Filter(
+                    must=[
+                        models.IsNullCondition(
+                            is_null=models.PayloadField(key="user_id"),
+                        )
+                    ]
+                )
+            ),
+        )
+        # Count via stats diff — approximate
+        anonymous_deleted = -1  # exact count not available from delete
+    except Exception as e:
+        logger.warning("Cleanup: failed to delete anonymous notes: %s", e)
+
+    # 2. Find orphaned notes (user_id not in user_profiles)
+    try:
+        # Collect all known user_ids from user_profiles
+        known_user_ids: set = set()
+        offset = None
+        while True:
+            results, next_offset = await note_observer._qdrant.scroll(
+                collection_name="user_profiles",
+                limit=100,
+                offset=offset,
+                with_payload=True,
+                with_vectors=False,
+            )
+            for pt in results:
+                if pt.payload:
+                    uid = pt.payload.get("user_id")
+                    if uid:
+                        known_user_ids.add(uid)
+            if next_offset is None:
+                break
+            offset = next_offset
+
+        # Scroll all notes, find orphaned user_ids
+        orphaned_user_ids: set = set()
+        offset = None
+        while True:
+            results, next_offset = await note_observer._qdrant.scroll(
+                collection_name="cca_notes",
+                limit=100,
+                offset=offset,
+                with_payload=True,
+                with_vectors=False,
+            )
+            for pt in results:
+                if pt.payload:
+                    uid = pt.payload.get("user_id")
+                    if uid and uid not in known_user_ids:
+                        orphaned_user_ids.add(uid)
+            if next_offset is None:
+                break
+            offset = next_offset
+
+        # Delete orphaned notes per user_id
+        for uid in orphaned_user_ids:
+            await note_observer._qdrant.delete(
+                collection_name="cca_notes",
+                points_selector=models.FilterSelector(
+                    filter=models.Filter(
+                        must=[
+                            models.FieldCondition(
+                                key="user_id",
+                                match=models.MatchValue(value=uid),
+                            )
+                        ]
+                    )
+                ),
+            )
+        orphaned_deleted = len(orphaned_user_ids)
+
+    except Exception as e:
+        logger.warning("Cleanup: failed to delete orphaned notes: %s", e)
+
+    # Get remaining count
+    remaining = 0
+    try:
+        info = await note_observer._qdrant.get_collection("cca_notes")
+        remaining = info.points_count
+    except Exception:
+        pass
+
+    return {
+        "anonymous_deleted": "cleaned" if anonymous_deleted == -1 else anonymous_deleted,
+        "orphaned_user_ids_deleted": orphaned_deleted,
+        "remaining": remaining,
     }
 
 

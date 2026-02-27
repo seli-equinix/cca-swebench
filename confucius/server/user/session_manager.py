@@ -20,6 +20,7 @@ Shared infrastructure with MCP server on Spark1:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import html as html_module
 import json
 import logging
@@ -55,6 +56,15 @@ EMBEDDING_DIMS: int = 4096
 
 # Redis key prefixes (namespaced to avoid collision with MCP sessions)
 SESSION_KEY_PREFIX: str = "cca:session:"
+
+
+def _stable_point_id(user_id: str) -> int:
+    """Deterministic Qdrant point ID from user_id.
+
+    Uses SHA256 so the same user_id always maps to the same point ID,
+    regardless of Python process (hash() is randomized per PYTHONHASHSEED).
+    """
+    return int.from_bytes(hashlib.sha256(user_id.encode()).digest()[:8], "big")
 
 
 # ============================================================================
@@ -677,17 +687,17 @@ class UserSessionManager:
 
         # ---- Qdrant ---------------------------------------------------------
         try:
-            from qdrant_client import QdrantClient
+            from qdrant_client import AsyncQdrantClient
             from qdrant_client.http import models
 
-            self._qdrant = QdrantClient(url=self._qdrant_url)
+            self._qdrant = AsyncQdrantClient(url=self._qdrant_url)
 
             # Ensure user_profiles collection exists
-            collections = self._qdrant.get_collections().collections
+            collections = (await self._qdrant.get_collections()).collections
             collection_names = [c.name for c in collections]
 
             if PROFILES_COLLECTION not in collection_names:
-                self._qdrant.create_collection(
+                await self._qdrant.create_collection(
                     collection_name=PROFILES_COLLECTION,
                     vectors_config=models.VectorParams(
                         size=EMBEDDING_DIMS,
@@ -1389,7 +1399,7 @@ class UserSessionManager:
                 from qdrant_client.http import models
 
                 # Step 1: exact match (scroll all profiles, compare names)
-                results = self._qdrant.scroll(
+                results = await self._qdrant.scroll(
                     collection_name=PROFILES_COLLECTION,
                     limit=100,
                     with_payload=True,
@@ -1413,12 +1423,12 @@ class UserSessionManager:
                 if self._embedding_func is not None:
                     embeddings = await self._embedding_func([name])
                     if embeddings:
-                        results = self._qdrant.query_points(
+                        results = (await self._qdrant.query_points(
                             collection_name=PROFILES_COLLECTION,
                             query=embeddings[0],
                             limit=1,
                             score_threshold=0.85,
-                        ).points
+                        )).points
                         if results:
                             candidate = UserProfile.from_dict(
                                 results[0].payload
@@ -1589,7 +1599,7 @@ class UserSessionManager:
 
                 for coll in (PROFILES_COLLECTION, CONTEXTS_COLLECTION):
                     try:
-                        self._qdrant.delete(
+                        await self._qdrant.delete(
                             collection_name=coll,
                             points_selector=models.FilterSelector(
                                 filter=models.Filter(
@@ -1660,12 +1670,8 @@ class UserSessionManager:
                 embeddings = await self._embedding_func([profile_text])
 
                 if embeddings:
-                    import hashlib
-                    point_id = int.from_bytes(
-                        hashlib.sha256(profile.user_id.encode()).digest()[:8],
-                        "big",
-                    )
-                    self._qdrant.upsert(
+                    point_id = _stable_point_id(profile.user_id)
+                    await self._qdrant.upsert(
                         collection_name=PROFILES_COLLECTION,
                         points=[
                             models.PointStruct(
@@ -1697,7 +1703,7 @@ class UserSessionManager:
             try:
                 from qdrant_client.http import models
 
-                results = self._qdrant.scroll(
+                results = await self._qdrant.scroll(
                     collection_name=PROFILES_COLLECTION,
                     scroll_filter=models.Filter(
                         must=[
@@ -1723,7 +1729,7 @@ class UserSessionManager:
 
         if self._qdrant is not None:
             try:
-                results = self._qdrant.scroll(
+                results = await self._qdrant.scroll(
                     collection_name=PROFILES_COLLECTION,
                     limit=1000,
                     with_payload=True,
@@ -1912,7 +1918,7 @@ class UserSessionManager:
 
         if self._qdrant is not None:
             try:
-                info = self._qdrant.get_collection(PROFILES_COLLECTION)
+                info = await self._qdrant.get_collection(PROFILES_COLLECTION)
                 stats["qdrant_profiles"] = info.points_count
             except Exception as e:
                 stats["qdrant_error"] = str(e)
@@ -1950,9 +1956,9 @@ class UserSessionManager:
             embedding = embeddings[0]
 
             # Ensure collection exists
-            collections = self._qdrant.get_collections().collections
+            collections = (await self._qdrant.get_collections()).collections
             if CONTEXTS_COLLECTION not in [c.name for c in collections]:
-                self._qdrant.create_collection(
+                await self._qdrant.create_collection(
                     collection_name=CONTEXTS_COLLECTION,
                     vectors_config=models.VectorParams(
                         size=EMBEDDING_DIMS,
@@ -1964,8 +1970,8 @@ class UserSessionManager:
                     CONTEXTS_COLLECTION,
                 )
 
-            point_id = abs(hash(user.user_id)) % (2**63)
-            self._qdrant.upsert(
+            point_id = _stable_point_id(user.user_id)
+            await self._qdrant.upsert(
                 collection_name=CONTEXTS_COLLECTION,
                 points=[
                     models.PointStruct(
@@ -2011,7 +2017,7 @@ class UserSessionManager:
             from qdrant_client.http import models
 
             # Check collection exists
-            collections = self._qdrant.get_collections().collections
+            collections = (await self._qdrant.get_collections()).collections
             if CONTEXTS_COLLECTION not in [c.name for c in collections]:
                 return None
 
@@ -2022,13 +2028,13 @@ class UserSessionManager:
             msg_embedding = embeddings[0]
 
             # Search with threshold
-            results = self._qdrant.query_points(
+            results = (await self._qdrant.query_points(
                 collection_name=CONTEXTS_COLLECTION,
                 query=msg_embedding,
                 limit=3,
                 with_payload=True,
                 score_threshold=self.ASK_THRESHOLD,
-            ).points
+            )).points
 
             logger.info(
                 "User inference query: %d matches above threshold %.2f",
@@ -2038,12 +2044,12 @@ class UserSessionManager:
 
             if not results:
                 # Peek without threshold for debug logging
-                all_results = self._qdrant.query_points(
+                all_results = (await self._qdrant.query_points(
                     collection_name=CONTEXTS_COLLECTION,
                     query=msg_embedding,
                     limit=3,
                     with_payload=True,
-                ).points
+                )).points
                 if all_results:
                     logger.info(
                         "User inference: Best match score %.3f "
@@ -2538,13 +2544,13 @@ class UserSessionManager:
                 },
             }
 
-        # Delete from Qdrant (sync client)
+        # Delete from Qdrant
         if self._qdrant is not None:
             from qdrant_client.http import models
 
-            for coll in (PROFILES_COLLECTION, CONTEXTS_COLLECTION):
+            for coll in (PROFILES_COLLECTION, CONTEXTS_COLLECTION, "cca_notes"):
                 try:
-                    self._qdrant.delete(
+                    await self._qdrant.delete(
                         collection_name=coll,
                         points_selector=models.FilterSelector(
                             filter=models.Filter(

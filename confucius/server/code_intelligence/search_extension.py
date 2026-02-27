@@ -236,7 +236,7 @@ class CodeSearchExtension(ToolUseExtension):
             search_filter = Filter(must=must_conditions) if must_conditions else None
 
             # Search
-            results = qdrant.query_points(
+            results = await qdrant.query_points(
                 collection_name="codebase_files",
                 query=query_vector,
                 query_filter=search_filter,
@@ -303,7 +303,7 @@ class CodeSearchExtension(ToolUseExtension):
             # Tier 1: Ephemeral docs (session-scoped, +0.15 boost)
             if self._session_id:
                 try:
-                    ephem_results = qdrant.query_points(
+                    ephem_results = await qdrant.query_points(
                         collection_name="ephemeral_docs",
                         query=query_vector,
                         query_filter=Filter(must=[
@@ -332,7 +332,7 @@ class CodeSearchExtension(ToolUseExtension):
             if self._user_id:
                 user_collection = f"user_{self._user_id}_knowledge"
                 try:
-                    user_results = qdrant.query_points(
+                    user_results = await qdrant.query_points(
                         collection_name=user_collection,
                         query=query_vector,
                         limit=n_results,
@@ -363,7 +363,7 @@ class CodeSearchExtension(ToolUseExtension):
                 )
             search_filter = Filter(must=must_conditions) if must_conditions else None
 
-            proj_results = qdrant.query_points(
+            proj_results = await qdrant.query_points(
                 collection_name="codebase_files",
                 query=query_vector,
                 query_filter=search_filter,
