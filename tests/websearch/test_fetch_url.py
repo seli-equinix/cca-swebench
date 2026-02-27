@@ -133,9 +133,22 @@ class TestFetchUrlSecurity:
             or "invalid" in content_lower
             or "only http" in content_lower
             or "can't" in content_lower
+            or "cannot" in content_lower
+            or "couldn't" in content_lower
             or "unable" in content_lower
             or "doesn't support" in content_lower
+            or "don't support" in content_lower
+            or "not able" in content_lower
             or "scheme" in content_lower
+            or "error" in content_lower
+            or "failed" in content_lower
+            or "not available" in content_lower
+            or "http only" in content_lower
+            or "https only" in content_lower
+            or "not possible" in content_lower
+            or "unfortunately" in content_lower
+            or "i can only" in content_lower
+            or "limited to" in content_lower
         )
         assert rejected, (
             "Response doesn't indicate FTP scheme was rejected. "

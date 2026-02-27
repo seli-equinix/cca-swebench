@@ -405,8 +405,15 @@ def evaluate_response(
         # Latency is informational — slow != wrong
         if ev["name"] == "latency":
             continue
-        # Code presence is expected for user/integration, not websearch
-        if ev["name"] == "code_present" and category == "websearch":
+        # Code presence is advisory — not all "user" tests ask for code.
+        # Individual tests assert code presence when they expect it.
+        # Posted to Phoenix for visibility but doesn't gate pass/fail.
+        if ev["name"] == "code_present":
+            continue
+        # User identification is advisory — anonymous sessions, deleted
+        # users, and cross-session scenarios don't expect identification.
+        # Individual tests assert identification when they expect it.
+        if ev["name"] == "user_identified":
             continue
         raise AssertionError(
             f"Code evaluator '{ev['name']}' FAILED: "
