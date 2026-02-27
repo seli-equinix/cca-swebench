@@ -285,9 +285,22 @@ def session_cleanup(cca):
     try:
         users_data = cca.list_users()
         test_prefixes = (
-            "TestUser_", "SkillUser_", "AliasUser_", "RmAlias_",
-            "RmSkill_", "FactUser_", "PrefUser_", "DelUser_",
-            "UpdateUser_", "ViewUser_", "ListUser_",
+            "TestUser_", "SkillUser_", "AliasUser_", "AliasChk_",
+            "Aliaschk_", "RmAlias_", "Rmalias_",
+            "RmSkill_", "Rmskill_", "SkillCheck_", "Skillcheck_",
+            "FactUser_", "Factuser_", "MultiFact_", "Multifact_",
+            "PrefUser_", "Prefuser_", "PrefAck_", "Prefack_",
+            "PrefRecall_", "Prefrecall_",
+            "DelUser_", "Deluser_", "DelGone_", "Delgone_",
+            "ViewUser_", "Viewuser_", "ViewData_", "Viewdata_",
+            "UpdateUser_", "ListUser_",
+            "NewUser_", "Newuser_", "NoDup_", "Nodup_",
+            "Greeter_", "Return_", "MetaUser_", "Metauser_",
+            "InferKnown_", "Inferknown_",
+            "CtxUser_", "Ctxuser_", "CtxFacts_", "Ctxfacts_",
+            "CtxEnrich_", "Ctxenrich_",
+            "Lifecycle_", "Persist_", "Recall_",
+            "Overwrite_", "RmFact_", "Rmfact_", "RmPref_", "Rmpref_",
         )
         for user in users_data.get("users", []):
             name = user.get("display_name", "")
