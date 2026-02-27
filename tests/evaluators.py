@@ -143,11 +143,16 @@ def eval_no_error(result: ChatResult) -> Dict[str, Any]:
 
 
 def eval_latency(result: ChatResult) -> Dict[str, Any]:
-    """Score: <30s = 1.0, <60s = 0.5, >60s = 0.0."""
+    """Score: <120s = 1.0, <300s = 0.5, >300s = 0.0.
+
+    Thresholds tuned for local LLMs on DGX Spark hardware. Each CCA
+    request involves routing (Functionary) + multi-iteration agent loop
+    (Qwen3-80B) + tool execution, so 60-120s is normal.
+    """
     ms = result.elapsed_ms
-    if ms < 30000:
+    if ms < 120_000:
         score, label = SCORE_PASS, "fast"
-    elif ms < 60000:
+    elif ms < 300_000:
         score, label = SCORE_PARTIAL, "moderate"
     else:
         score, label = SCORE_FAIL, "slow"
@@ -156,7 +161,7 @@ def eval_latency(result: ChatResult) -> Dict[str, Any]:
         "annotator_kind": "CODE",
         "score": score,
         "label": label,
-        "explanation": f"{ms:.0f}ms",
+        "explanation": f"{ms/1000:.1f}s",
     }
 
 
