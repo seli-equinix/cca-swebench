@@ -10,11 +10,11 @@ entry uses tool_groups.py to select exactly the right tools.
 Route → ToolGroups → Extensions → Orchestrator
 
 This means the LLM only ever sees the tools relevant to the current task:
-- USER route: 6 tools (user management only)
-- CODER route: ~10 tools (file, shell, memory, web)
-- INFRA route: ~10 tools (shell, file, memory, web)
-- SEARCH route: ~8 tools (web, file, memory)
-- PLANNER route: ~6 tools (memory only)
+- USER route: 7 tools (user management + notes)
+- CODER route: ~28 tools (file, shell, memory, web, code, graph, docs, notes, rules)
+- INFRA route: ~28 tools (same as coder, wider shell allowlist)
+- SEARCH route: ~23 tools (web, file, memory, code, graph, docs, notes)
+- PLANNER route: ~12 tools (planner, memory, code search, web, notes)
 """
 
 from __future__ import annotations

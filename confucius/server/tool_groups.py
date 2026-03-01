@@ -52,9 +52,9 @@ class ToolGroup(str, Enum):
     GRAPH = "graph"         # GraphToolsExtension (3 tools: query_call_graph, find_orphan_functions, analyze_dependencies)
     DOCUMENT = "document"   # DocumentToolsExtension (4 tools: upload_document, search_documents, list_session_docs, promote_doc_to_knowledge)
     NOTES = "notes"         # NoteSearchExtension (1 tool: search_notes)
+    RULES = "rules"         # RulesToolsExtension (4 tools: create_rule, request_rule, list_rules, delete_rule)
     # Future groups — uncomment as extensions are ported:
     # VISION = "vision"     # VisionToolsExtension (1 tool)
-    # RULES = "rules"       # RulesToolsExtension (4 tools)
     # GIT = "git"           # GitToolsExtension (1 tool)
 
 
@@ -66,6 +66,7 @@ class ToolGroup(str, Enum):
 ROUTE_TOOL_GROUPS: Dict[ExpertType, List[ToolGroup]] = {
     ExpertType.USER: [
         ToolGroup.USER,
+        ToolGroup.NOTES,
     ],
     ExpertType.CODER: [
         ToolGroup.PLANNER,
@@ -78,6 +79,7 @@ ROUTE_TOOL_GROUPS: Dict[ExpertType, List[ToolGroup]] = {
         ToolGroup.GRAPH,
         ToolGroup.DOCUMENT,
         ToolGroup.NOTES,
+        ToolGroup.RULES,
     ],
     ExpertType.INFRASTRUCTURE: [
         ToolGroup.PLANNER,
@@ -90,6 +92,7 @@ ROUTE_TOOL_GROUPS: Dict[ExpertType, List[ToolGroup]] = {
         ToolGroup.GRAPH,
         ToolGroup.DOCUMENT,
         ToolGroup.NOTES,
+        ToolGroup.RULES,
     ],
     ExpertType.SEARCH: [
         ToolGroup.WEB,
@@ -97,12 +100,16 @@ ROUTE_TOOL_GROUPS: Dict[ExpertType, List[ToolGroup]] = {
         ToolGroup.MEMORY,
         ToolGroup.USER_MEMORY,
         ToolGroup.CODE_SEARCH,
+        ToolGroup.GRAPH,
         ToolGroup.DOCUMENT,
         ToolGroup.NOTES,
     ],
     ExpertType.PLANNER: [
         ToolGroup.PLANNER,
         ToolGroup.MEMORY,
+        ToolGroup.CODE_SEARCH,
+        ToolGroup.WEB,
+        ToolGroup.NOTES,
     ],
 }
 
@@ -242,6 +249,14 @@ def build_extensions_for_route(
             if backend_clients is not None and user_id:
                 from .note_search_extension import NoteSearchExtension
                 extensions.append(NoteSearchExtension(
+                    backend_clients=backend_clients,
+                    user_id=user_id,
+                ))
+
+        elif group == ToolGroup.RULES:
+            if backend_clients is not None:
+                from .code_intelligence.rules_extension import RulesToolsExtension
+                extensions.append(RulesToolsExtension(
                     backend_clients=backend_clients,
                     user_id=user_id,
                 ))

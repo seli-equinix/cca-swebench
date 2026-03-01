@@ -552,6 +552,29 @@ async def _handle_chat_completions(
         except Exception as e:
             logger.debug("Note enrichment failed (non-fatal): %s", e)
 
+    # 6c. Inject always-type rules into system prompt
+    if backend_clients and backend_clients.available:
+        try:
+            from .code_intelligence.rules_store import RulesStore
+
+            rules_store = RulesStore(backend_clients)
+            rule_user_id = user.user_id if user else None
+            always_rules = await rules_store.get_always_rules(rule_user_id)
+            if always_rules:
+                rules_lines = [f"- **{r.name}**: {r.rule}" for r in always_rules]
+                user_context += (
+                    "\n\n### Active Rules\n"
+                    "Follow these rules in all interactions:\n\n"
+                    + "\n".join(rules_lines)
+                )
+                logger.debug(
+                    "Injected %d always-rules for user %s",
+                    len(always_rules),
+                    rule_user_id,
+                )
+        except Exception as e:
+            logger.debug("Rules injection failed (non-fatal): %s", e)
+
     # 7. Create user tools extension
     user_ext = UserToolsExtension(
         session_mgr=user_session_mgr,
