@@ -116,8 +116,9 @@ class DualModelOrchestrator(AnthropicLLMOrchestrator):
     # Stall detection: track 8B output hashes to detect repetition
     _last_fast_context_hash: int = PrivateAttr(default=0)
     _repeated_context_count: int = PrivateAttr(default=0)
-    # Track whether any tools ran during this request
+    # Post-completion synthesis: track whether tools ran and synthesis done
     _had_tool_iterations: bool = PrivateAttr(default=False)
+    _synthesis_done: bool = PrivateAttr(default=False)
     # Tool-nudge: re-prompt once if model describes intent but doesn't call tools
     _tool_nudge_done: bool = PrivateAttr(default=False)
     # Global error circuit breaker (works for 80B too, not just 8B→80B)
@@ -438,6 +439,34 @@ class DualModelOrchestrator(AnthropicLLMOrchestrator):
                             "You have bash and file editing tools available. "
                             "Don't just describe what you'll do — use the tools "
                             "to actually execute the code. Start now."
+                        ),
+                        additional_kwargs={"__synthetic__": True},
+                    )
+                ])
+                continue
+
+            elif self._had_tool_iterations and not self._synthesis_done:
+                # 80B produced text after tool work. Its response was an
+                # internal working draft — force one more iteration to
+                # produce a single, clean, consolidated answer for the user.
+                logger.info(
+                    "Dual-model: tool work complete — forcing consolidated response"
+                )
+                self._synthesis_done = True
+                context.memory_manager.add_messages([
+                    CfMessage(
+                        type=cf.MessageType.HUMAN,
+                        content=(
+                            "Your previous response was an internal draft. Now "
+                            "produce your FINAL response for the user. Rules:\n"
+                            "- Give ONE consolidated answer (do NOT repeat code "
+                            "or explanations that already appeared above)\n"
+                            "- If you already showed code, just reference it — "
+                            "don't show it again\n"
+                            "- Keep it concise: what was done, what the result "
+                            "was, and any next steps\n"
+                            "- Do NOT start with 'Summary of Accomplishments' "
+                            "or similar headings"
                         ),
                         additional_kwargs={"__synthetic__": True},
                     )
