@@ -116,9 +116,8 @@ class DualModelOrchestrator(AnthropicLLMOrchestrator):
     # Stall detection: track 8B output hashes to detect repetition
     _last_fast_context_hash: int = PrivateAttr(default=0)
     _repeated_context_count: int = PrivateAttr(default=0)
-    # Post-completion synthesis: track whether tools ran and synthesis done
+    # Track whether any tools ran during this request
     _had_tool_iterations: bool = PrivateAttr(default=False)
-    _synthesis_done: bool = PrivateAttr(default=False)
     # Tool-nudge: re-prompt once if model describes intent but doesn't call tools
     _tool_nudge_done: bool = PrivateAttr(default=False)
     # Global error circuit breaker (works for 80B too, not just 8B→80B)
@@ -439,27 +438,6 @@ class DualModelOrchestrator(AnthropicLLMOrchestrator):
                             "You have bash and file editing tools available. "
                             "Don't just describe what you'll do — use the tools "
                             "to actually execute the code. Start now."
-                        ),
-                        additional_kwargs={"__synthetic__": True},
-                    )
-                ])
-                continue
-
-            elif self._had_tool_iterations and not self._synthesis_done:
-                # 80B finished after tool work but hasn't summarized yet.
-                # Force one more 80B call to produce a clear summary of
-                # what was accomplished (files created, code written, test results).
-                logger.info(
-                    "Dual-model: tool work complete — forcing synthesis summary"
-                )
-                self._synthesis_done = True
-                context.memory_manager.add_messages([
-                    CfMessage(
-                        type=cf.MessageType.HUMAN,
-                        content=(
-                            "Now give a clear summary of what you accomplished: "
-                            "what files you created or modified, the key code, "
-                            "and the results of any tests. Show the final code."
                         ),
                         additional_kwargs={"__synthetic__": True},
                     )
