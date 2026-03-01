@@ -517,8 +517,11 @@ async def _handle_chat_completions(
         elif id_source == "regex_auto":
             user_context += (
                 "\n[New user profile just created — IMMEDIATELY extract and save "
-                "ALL technical skills, tools, and facts they mentioned using "
-                "remember_user_fact (key='skill', value='<skill>') for EACH skill. "
+                "ALL details they mentioned using remember_user_fact:\n"
+                "  - Skills: key='skill', value='Python' (for EACH skill)\n"
+                "  - Employer/company: key='employer', value='Acme Corp'\n"
+                "  - Role/title: key='role', value='DevOps engineer'\n"
+                "  - Other facts: key='<topic>', value='<detail>'\n"
                 "Do this BEFORE answering their question.]"
             )
     elif id_result.get("action") == "asking":

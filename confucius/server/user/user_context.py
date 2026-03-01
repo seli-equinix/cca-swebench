@@ -98,7 +98,7 @@ IMPORTANT - NATURAL CONVERSATION STYLE:
 - DON'T say technical phrases like "context loaded", "memory retrieved"
 - DO say natural things like "Good to see you again!", "I remember we worked on..."
 - Reference their past work/projects naturally as if you genuinely remember them
-- If you remember facts about them, weave them in conversationally
+- The 'Known Facts' listed above are YOUR memories of this person — use them to answer their questions
 {tool_docs}
 """
     sections.append(personalization)
