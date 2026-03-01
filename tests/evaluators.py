@@ -201,31 +201,43 @@ def eval_user_identified(result: ChatResult) -> Optional[Dict[str, Any]]:
 # Prompt templates for llm_classify. Variables in {curly_braces} are
 # replaced by column names from the DataFrame passed to llm_classify.
 
-RESPONSE_QUALITY_TEMPLATE = """Rate this AI coding assistant response. Answer with ONLY the label on the first line, then a one-sentence explanation.
+RESPONSE_QUALITY_TEMPLATE = """Rate this AI agent response. The agent (CCA) is a tool-augmented assistant with REAL capabilities beyond text generation:
+- It HAS tools to create, delete, and modify user profiles (names, skills, aliases, facts)
+- It CAN store and recall personal facts about users across sessions via persistent storage
+- It CAN search the web and fetch URLs via integrated search tools
+- It CAN execute code, manage files, and run shell commands
+
+When the agent says it stored a fact, deleted a profile, added a skill, or recalled user info, it actually performed these actions via tool calls. Do NOT penalize these as fabricated or impossible.
+
+Answer with ONLY the label on the first line, then a one-sentence explanation.
 
 Labels: good | adequate | poor
 
+Task category: {category}
 User asked: {message}
 
 Response: {response}
 
-good = helpful, accurate, addresses the request
-adequate = partially addresses but has issues
-poor = unhelpful, incorrect, or off-topic
+good = helpful, accurate, addresses the request appropriately for the task category
+adequate = partially addresses but has gaps or minor issues
+poor = unhelpful, incorrect, or completely off-topic
 
 Label:"""
 
-TASK_COMPLETION_TEMPLATE = """Did this AI coding assistant complete the user's task? Answer with ONLY the label on the first line, then a one-sentence explanation.
+TASK_COMPLETION_TEMPLATE = """Did this AI agent complete the user's task? The agent (CCA) has real tools for: coding, user profile management (create/delete/modify profiles, skills, aliases), persistent fact storage/recall across sessions, web search, and URL fetching. When it says it performed an action, it actually did via tool calls.
+
+Answer with ONLY the label on the first line, then a one-sentence explanation.
 
 Labels: completed | partial | failed
 
+Task category: {category}
 User asked: {message}
 
 Response: {response}
 
-completed = task fully accomplished
+completed = task fully accomplished for the given category
 partial = task partially done or incomplete
-failed = task not accomplished or off-topic
+failed = task not accomplished or completely off-topic
 
 Label:"""
 
@@ -288,6 +300,7 @@ def _run_llm_classify(
     template: str,
     rails: list,
     eval_name: str,
+    category: str = "general",
 ) -> Dict[str, Any]:
     """Run LLM judge via direct API call with thinking-model support.
 
@@ -298,9 +311,18 @@ def _run_llm_classify(
     """
     import httpx
 
+    # Map category codes to human-readable descriptions for the judge
+    category_labels = {
+        "user": "User profile management + coding task",
+        "websearch": "Web search and information retrieval",
+        "integration": "End-to-end integration (user lifecycle + coding)",
+    }
+    category_desc = category_labels.get(category, category)
+
     prompt = template.format(
         message=message[:2000],
         response=response[:2000],
+        category=category_desc,
     )
 
     try:
@@ -351,7 +373,7 @@ def _run_llm_classify(
 
 
 def eval_response_quality(
-    result: ChatResult, message: str, judge_model
+    result: ChatResult, message: str, judge_model, category: str = "general",
 ) -> Dict[str, Any]:
     """LLM judges: Is this a helpful, accurate, complete response?"""
     return _run_llm_classify(
@@ -361,11 +383,12 @@ def eval_response_quality(
         template=RESPONSE_QUALITY_TEMPLATE,
         rails=RESPONSE_QUALITY_RAILS,
         eval_name="response_quality",
+        category=category,
     )
 
 
 def eval_task_completion(
-    result: ChatResult, message: str, judge_model
+    result: ChatResult, message: str, judge_model, category: str = "general",
 ) -> Dict[str, Any]:
     """LLM judges: Did the agent accomplish the stated task?"""
     return _run_llm_classify(
@@ -375,6 +398,7 @@ def eval_task_completion(
         template=TASK_COMPLETION_TEMPLATE,
         rails=TASK_COMPLETION_RAILS,
         eval_name="task_completion",
+        category=category,
     )
 
 
@@ -426,7 +450,7 @@ def evaluate_response(
     # --- LLM judge evaluators (only if judge available) ---
     if judge_model is not None and result.content:
         for llm_eval in [eval_response_quality, eval_task_completion]:
-            ev = llm_eval(result, message, judge_model)
+            ev = llm_eval(result, message, judge_model, category=category)
             evals[ev["name"]] = ev
 
     # --- Set OpenInference I/O so Phoenix shows input/output columns ---
