@@ -117,6 +117,10 @@ class CCAClient:
         long as the server sends data (content, keepalives, progress).
         Only times out if no data arrives for idle_timeout seconds.
 
+        Retries once on transient connection errors (5s backoff) to handle
+        network blips without failing the test. The server sends keepalives
+        every 8s, so a genuine timeout means the connection is truly dead.
+
         Args:
             message: The user message to send.
             session_id: Optional session ID for multi-turn conversations.
@@ -125,6 +129,7 @@ class CCAClient:
         """
         session_id = session_id or f"test-{uuid.uuid4().hex[:12]}"
         read_timeout = idle_timeout or self.idle_timeout
+        max_attempts = 2  # 1 try + 1 retry for transient errors
 
         with self.tracer.start_as_current_span("cca.chat") as span:
             span.set_attribute("openinference.span.kind", "CHAIN")
@@ -145,41 +150,65 @@ class CCAClient:
                 "session_id": session_id,
             }
 
-            t0 = time.time()
-            try:
-                result = self._stream_chat(
-                    payload, session_id, read_timeout, span
-                )
-                elapsed_ms = (time.time() - t0) * 1000
-                result.elapsed_ms = elapsed_ms
-
-                span.set_attribute("cca.status", "success")
-                span.set_attribute("cca.duration_ms", elapsed_ms)
-                span.set_attribute("cca.response_length", len(result.content))
-                span.set_attribute("cca.response_preview", result.content[:500])
-                span.set_attribute("output.value", result.content[:500])
-                span.set_attribute("cca.finish_reason", result.finish_reason)
-                if result.metadata:
-                    span.set_attribute(
-                        "cca.tool_iterations",
-                        result.metadata.get("tool_iterations", 0),
+            last_error: Optional[Exception] = None
+            for attempt in range(max_attempts):
+                t0 = time.time()
+                try:
+                    result = self._stream_chat(
+                        payload, session_id, read_timeout, span
                     )
-                    if result.metadata.get("route"):
-                        span.set_attribute("cca.route", result.metadata["route"])
-                if result.user_identified:
-                    span.set_attribute("cca.user_identified", True)
-                    span.set_attribute("cca.user_name", result.user_name or "")
+                    elapsed_ms = (time.time() - t0) * 1000
+                    result.elapsed_ms = elapsed_ms
 
-                span.set_status(StatusCode.OK)
-                return result
+                    # _stream_chat returns error ChatResult on connection
+                    # failures instead of raising. Retry once on these.
+                    if result.raw.get("error") and attempt < max_attempts - 1:
+                        span.set_attribute(
+                            "cca.retry_reason",
+                            result.raw["error"][:200],
+                        )
+                        span.set_attribute("cca.retry_attempt", attempt + 1)
+                        time.sleep(5)
+                        continue
 
-            except Exception as e:
-                elapsed_ms = (time.time() - t0) * 1000
-                span.set_attribute("cca.status", "error")
-                span.set_attribute("cca.error", str(e))
-                span.set_attribute("cca.duration_ms", elapsed_ms)
-                span.set_status(StatusCode.ERROR, str(e)[:500])
-                raise
+                    span.set_attribute("cca.status", "success")
+                    span.set_attribute("cca.duration_ms", elapsed_ms)
+                    span.set_attribute("cca.response_length", len(result.content))
+                    span.set_attribute("cca.response_preview", result.content[:500])
+                    span.set_attribute("output.value", result.content[:500])
+                    span.set_attribute("cca.finish_reason", result.finish_reason)
+                    if result.metadata:
+                        span.set_attribute(
+                            "cca.tool_iterations",
+                            result.metadata.get("tool_iterations", 0),
+                        )
+                        if result.metadata.get("route"):
+                            span.set_attribute("cca.route", result.metadata["route"])
+                    if result.user_identified:
+                        span.set_attribute("cca.user_identified", True)
+                        span.set_attribute("cca.user_name", result.user_name or "")
+
+                    span.set_status(StatusCode.OK)
+                    return result
+
+                except Exception as e:
+                    last_error = e
+                    elapsed_ms = (time.time() - t0) * 1000
+                    if attempt < max_attempts - 1:
+                        span.set_attribute(
+                            "cca.retry_reason", str(e)[:200],
+                        )
+                        span.set_attribute("cca.retry_attempt", attempt + 1)
+                        time.sleep(5)
+                        continue
+                    span.set_attribute("cca.status", "error")
+                    span.set_attribute("cca.error", str(e))
+                    span.set_attribute("cca.duration_ms", elapsed_ms)
+                    span.set_status(StatusCode.ERROR, str(e)[:500])
+                    raise
+
+            # Should not reach here, but satisfy type checker
+            raise last_error  # type: ignore[misc]
 
     def _stream_chat(
         self,
@@ -192,6 +221,10 @@ class CCAClient:
 
         Parses SSE events, accumulates content + reasoning, and extracts
         context_metadata from the final metadata event before [DONE].
+
+        Catches httpx transport errors (ReadTimeout, ConnectionReset, etc.)
+        and returns a ChatResult with partial content + error info instead
+        of propagating raw httpcore tracebacks.
         """
         content_parts: list[str] = []
         reasoning_parts: list[str] = []
@@ -213,63 +246,85 @@ class CCAClient:
         headers: Dict[str, str] = {"X-Session-Id": session_id}
         otel_inject(headers)
 
-        with self._client.stream(
-            "POST",
-            f"{self.base_url}/v1/chat/completions",
-            json=payload,
-            headers=headers,
-            timeout=timeout,
-        ) as resp:
-            if resp.status_code != 200:
-                body = resp.read().decode()
-                return ChatResult(
-                    {"error": body, "status_code": resp.status_code}, 0
-                )
+        try:
+            with self._client.stream(
+                "POST",
+                f"{self.base_url}/v1/chat/completions",
+                json=payload,
+                headers=headers,
+                timeout=timeout,
+            ) as resp:
+                if resp.status_code != 200:
+                    body = resp.read().decode()
+                    return ChatResult(
+                        {"error": body, "status_code": resp.status_code}, 0
+                    )
 
-            for line in resp.iter_lines():
-                if not line.strip():
-                    continue
+                for line in resp.iter_lines():
+                    if not line.strip():
+                        continue
 
-                # SSE comments (keepalive, progress) — skip but they
-                # reset the read timeout, which is the whole point
-                if line.startswith(":"):
-                    continue
+                    # SSE comments (keepalive, progress) — skip but they
+                    # reset the read timeout, which is the whole point
+                    if line.startswith(":"):
+                        continue
 
-                if not line.startswith("data: "):
-                    continue
+                    if not line.startswith("data: "):
+                        continue
 
-                data_str = line[6:]  # strip "data: " prefix
+                    data_str = line[6:]  # strip "data: " prefix
 
-                # Terminal marker
-                if data_str == "[DONE]":
-                    break
+                    # Terminal marker
+                    if data_str == "[DONE]":
+                        break
 
-                try:
-                    chunk = json.loads(data_str)
-                except json.JSONDecodeError:
-                    continue
+                    try:
+                        chunk = json.loads(data_str)
+                    except json.JSONDecodeError:
+                        continue
 
-                # Context metadata event (sent before [DONE])
-                if "context_metadata" in chunk and "choices" not in chunk:
-                    context_metadata = chunk["context_metadata"]
-                    continue
+                    # Context metadata event (sent before [DONE])
+                    if "context_metadata" in chunk and "choices" not in chunk:
+                        context_metadata = chunk["context_metadata"]
+                        continue
 
-                completion_id = chunk.get("id", completion_id)
-                model = chunk.get("model", model)
+                    completion_id = chunk.get("id", completion_id)
+                    model = chunk.get("model", model)
 
-                choices = chunk.get("choices", [])
-                if not choices:
-                    continue
+                    choices = chunk.get("choices", [])
+                    if not choices:
+                        continue
 
-                delta = choices[0].get("delta", {})
-                fr = choices[0].get("finish_reason")
-                if fr:
-                    finish_reason = fr
+                    delta = choices[0].get("delta", {})
+                    fr = choices[0].get("finish_reason")
+                    if fr:
+                        finish_reason = fr
 
-                if delta.get("content"):
-                    content_parts.append(delta["content"])
-                if delta.get("reasoning_content"):
-                    reasoning_parts.append(delta["reasoning_content"])
+                    if delta.get("content"):
+                        content_parts.append(delta["content"])
+                    if delta.get("reasoning_content"):
+                        reasoning_parts.append(delta["reasoning_content"])
+
+        except (httpx.ReadTimeout, httpx.ConnectError, httpx.RemoteProtocolError,
+                httpx.CloseError) as e:
+            # Return partial content with clear error instead of raw traceback
+            content = "".join(content_parts)
+            partial = f" (partial: {len(content)} chars)" if content else ""
+            return ChatResult(
+                {
+                    "error": f"{type(e).__name__}: {e}{partial}",
+                    "choices": [{
+                        "message": {
+                            "role": "assistant",
+                            "content": content,
+                            "reasoning": "".join(reasoning_parts) or None,
+                        },
+                        "finish_reason": "error",
+                    }],
+                    "context_metadata": context_metadata,
+                },
+                0,
+            )
 
         # Build a ChatResult that looks like a non-streaming response
         content = "".join(content_parts)
