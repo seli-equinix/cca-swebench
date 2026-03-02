@@ -555,7 +555,7 @@ class DualModelOrchestrator(AnthropicLLMOrchestrator):
 
     def _last_assistant_has_code(self, context: AnalectRunContext) -> bool:
         """Check if the last assistant message already contains code."""
-        for msg in reversed(context.memory_manager.messages):
+        for msg in reversed(context.memory_manager.memory.messages):
             if msg.type == cf.MessageType.AI:
                 text = msg.content if isinstance(msg.content, str) else ""
                 if not text:
