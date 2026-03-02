@@ -142,12 +142,15 @@ def get_max_iterations(route: RouteDecision) -> int:
     response (80B) = N+3 iterations minimum.  With cap=8 and N>=5, the
     orchestrator hits MaxIterationsReachedError before 80B synthesis can
     run, producing 0-char responses.
+    Even a 1-step search needs at minimum 20 iterations to allow 17+ 8B
+    research iterations plus 80B synthesis.
     """
     base = _BASE_MAX_ITERATIONS.get(route.expert, 20)
     if route.expert == ExpertType.SEARCH:
         # Never apply simple cap to SEARCH — research + synthesis need room.
-        # Use estimated_steps * 3 (research is multi-step) but floor at base.
-        from_steps = route.estimated_steps * 3
+        # Minimum 20 iterations regardless of step estimate so the 80B
+        # synthesis always gets a slot even for "simple" 1-step queries.
+        from_steps = max(route.estimated_steps * 3, 20)
         return max(base, min(from_steps, 200))
     if route.is_simple:  # estimated_steps <= 3
         return _SIMPLE_MAX_ITERATIONS
