@@ -183,16 +183,19 @@ class HttpRoutedEntry(Analect[EntryInput, EntryOutput], EntryAnalectMixin):
             raw_output_parser=None,
             max_iterations=max_iterations,
         )
-        # Inject research model for tool iterations (graceful if not configured).
-        # SEARCH: uses search_researcher (35B on Spark2) — same capability as primary,
-        #   can accurately read and summarize web search results without hallucinating.
+        # Inject research model for tool iterations (CODER/INFRA only).
+        # SEARCH: no tool_orch_params — primary 35B handles web_search directly.
+        #   The dual-model handoff pattern causes hallucination loops for web search
+        #   regardless of model size: the "brief writer" invents failures, the primary
+        #   believes it, and the loop continues. Direct search is reliable.
+        #   search_researcher profile exists in config for future dedicated hardware.
         # CODER/INFRA: uses tool_orchestrator (8B on Spark1) — fast for deterministic
         #   tool calls (bash, file edits) where output is always ground truth.
-        try:
-            research_role = "search_researcher" if expert == ExpertType.SEARCH else "tool_orchestrator"
-            orchestrator._tool_orch_params = get_llm_params(research_role)
-        except CCAConfigError:
-            pass  # Falls back to primary model for all iterations
+        if expert != ExpertType.SEARCH:
+            try:
+                orchestrator._tool_orch_params = get_llm_params("tool_orchestrator")
+            except CCAConfigError:
+                pass  # Falls back to primary model for all iterations
         # Pass router complexity estimate to orchestrator (controls nudge behavior)
         orchestrator._estimated_steps = self._route.estimated_steps
         # SEARCH allows inline responses (informational queries have no side effects).

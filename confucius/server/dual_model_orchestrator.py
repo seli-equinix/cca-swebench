@@ -640,12 +640,15 @@ class DualModelOrchestrator(AnthropicLLMOrchestrator):
                 self._had_tool_iterations
                 and not self._synthesis_done
                 and self._research_cycle_count == 0
+                and self._requires_tool_use
             ):
                 # 80B produced text after tool work (coding/non-research routes).
                 # Its response was an internal working draft — force one more
                 # iteration to produce a single, clean, consolidated answer.
                 # Research routes skip this: the evaluation checkpoint handles
                 # synthesis — the 80B's response IS the final answer.
+                # SEARCH (_requires_tool_use=False): 35B writes its answer
+                # directly after web_search — no extra synthesis iteration.
                 logger.info(
                     "Dual-model: tool work complete — forcing consolidated response"
                 )
