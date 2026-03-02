@@ -59,7 +59,18 @@ class ChatResult:
 
     def __repr__(self) -> str:
         preview = self.content[:80] + "..." if len(self.content) > 80 else self.content
-        return f"ChatResult({self.elapsed_ms:.0f}ms, {len(self.content)} chars: {preview!r})"
+        meta_parts = [f"{self.elapsed_ms:.0f}ms", f"{len(self.content)} chars"]
+        if self.metadata.get("route"):
+            meta_parts.append(f"route={self.metadata['route']}")
+        if self.metadata.get("tool_iterations"):
+            meta_parts.append(f"iters={self.metadata['tool_iterations']}")
+        if self.metadata.get("estimated_steps"):
+            meta_parts.append(f"steps={self.metadata['estimated_steps']}")
+        if self.metadata.get("nudge_skipped"):
+            meta_parts.append("nudge_skipped")
+        if self.metadata.get("circuit_breaker_fired"):
+            meta_parts.append("CB_FIRED")
+        return f"ChatResult({', '.join(meta_parts)}: {preview!r})"
 
 
 class CCAClient:
@@ -184,9 +195,26 @@ class CCAClient:
                         )
                         if result.metadata.get("route"):
                             span.set_attribute("cca.route", result.metadata["route"])
+                        if result.metadata.get("estimated_steps"):
+                            span.set_attribute(
+                                "cca.estimated_steps",
+                                result.metadata["estimated_steps"],
+                            )
                     if result.user_identified:
                         span.set_attribute("cca.user_identified", True)
                         span.set_attribute("cca.user_name", result.user_name or "")
+
+                    # Stash metrics on parent span for per-test reporting
+                    parent_span = trace.get_current_span()
+                    if hasattr(parent_span, "_test_metrics"):
+                        parent_span._test_metrics.update({
+                            "tool_iterations": result.metadata.get("tool_iterations", 0),
+                            "route": result.metadata.get("route", ""),
+                            "estimated_steps": result.metadata.get("estimated_steps", 0),
+                            "execution_time_ms": elapsed_ms,
+                            "nudge_skipped": result.metadata.get("nudge_skipped", False),
+                            "circuit_breaker_fired": result.metadata.get("circuit_breaker_fired", False),
+                        })
 
                     span.set_status(StatusCode.OK)
                     return result

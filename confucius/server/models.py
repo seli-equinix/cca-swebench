@@ -190,6 +190,18 @@ class ContextMetadata(BaseModel):
     execution_time_ms: float = Field(
         0.0, description="Total request execution time in milliseconds"
     )
+    estimated_steps: int = Field(
+        0, description="Router's estimated task complexity"
+    )
+    max_iterations: int = Field(
+        0, description="Max iterations allowed for this request"
+    )
+    nudge_skipped: bool = Field(
+        False, description="Whether the tool nudge was skipped"
+    )
+    circuit_breaker_fired: bool = Field(
+        False, description="Whether error circuit breaker fired"
+    )
 
 
 class ChatCompletionResponse(BaseModel):

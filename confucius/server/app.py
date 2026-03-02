@@ -726,6 +726,10 @@ async def _handle_chat_completions(
                     user_identified=session.identified,
                     user_name=user.display_name if user else None,
                     execution_time_ms=(time.time() - start_time) * 1000,
+                    estimated_steps=route.estimated_steps if route else 0,
+                    max_iterations=get_max_iterations(route) if route else 0,
+                    nudge_skipped=getattr(entry, "_nudge_skipped", False),
+                    circuit_breaker_fired=getattr(entry, "_circuit_breaker_fired", False),
                 ).model_dump()
 
             return StreamingResponse(

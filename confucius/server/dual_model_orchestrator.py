@@ -124,6 +124,10 @@ class DualModelOrchestrator(AnthropicLLMOrchestrator):
     # Global error circuit breaker (works for 80B too, not just 8B→80B)
     _total_consecutive_errors: int = PrivateAttr(default=0)
     _error_hint_injected: bool = PrivateAttr(default=False)
+    # Complexity hint from router — controls nudge behavior
+    _estimated_steps: int = PrivateAttr(default=10)
+    # Tracking flag for monitoring: was the tool nudge skipped?
+    _nudge_skipped: bool = PrivateAttr(default=False)
 
     # ── Model selection ──────────────────────────────────────────
 
@@ -425,25 +429,37 @@ class DualModelOrchestrator(AnthropicLLMOrchestrator):
             ):
                 # Model described intent but didn't call tools on first turn.
                 # Qwen3 sometimes generates markdown code blocks instead of
-                # making tool calls.  Nudge it once to actually use tools.
-                logger.info(
-                    "Dual-model: no tools called after %d iterations "
-                    "— nudging model to use tools",
-                    self._num_iterations,
-                )
+                # making tool calls.  Nudge it once to actually use tools —
+                # BUT skip the nudge if the model already gave code inline
+                # or the task is simple (estimated_steps <= 3).
                 self._tool_nudge_done = True
-                context.memory_manager.add_messages([
-                    CfMessage(
-                        type=cf.MessageType.HUMAN,
-                        content=(
-                            "You have bash and file editing tools available. "
-                            "Don't just describe what you'll do — use the tools "
-                            "to actually execute the code. Start now."
-                        ),
-                        additional_kwargs={"__synthetic__": True},
+                has_code = self._last_assistant_has_code(context)
+                is_simple = self._estimated_steps <= 3
+                if has_code or is_simple:
+                    logger.info(
+                        "Dual-model: skipping tool nudge — %s",
+                        "response has code" if has_code else "simple task",
                     )
-                ])
-                continue
+                    self._nudge_skipped = True
+                    # Fall through to completion branch (don't continue)
+                else:
+                    logger.info(
+                        "Dual-model: no tools called after %d iterations "
+                        "— nudging model to use tools",
+                        self._num_iterations,
+                    )
+                    context.memory_manager.add_messages([
+                        CfMessage(
+                            type=cf.MessageType.HUMAN,
+                            content=(
+                                "You have bash and file editing tools available. "
+                                "Don't just describe what you'll do — use the tools "
+                                "to actually execute the code. Start now."
+                            ),
+                            additional_kwargs={"__synthetic__": True},
+                        )
+                    ])
+                    continue
 
             elif self._had_tool_iterations and not self._synthesis_done:
                 # 80B produced text after tool work. Its response was an
@@ -536,6 +552,22 @@ class DualModelOrchestrator(AnthropicLLMOrchestrator):
 
         # Quality gate: check for errors after processing (8B→80B)
         self._update_quality_gate()
+
+    def _last_assistant_has_code(self, context: AnalectRunContext) -> bool:
+        """Check if the last assistant message already contains code."""
+        for msg in reversed(context.memory_manager.messages):
+            if msg.type == cf.MessageType.AI:
+                text = msg.content if isinstance(msg.content, str) else ""
+                if not text:
+                    continue
+                if "```" in text:
+                    return True
+                code_patterns = [
+                    "def ", "class ", "import ", "from ", "lambda ",
+                    "print(", "return ", "async def ", "await ",
+                ]
+                return any(p in text for p in code_patterns)
+        return False
 
     def _update_quality_gate(self) -> None:
         """Escalate to 80B if 8B has too many consecutive failures."""

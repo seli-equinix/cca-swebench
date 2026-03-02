@@ -185,6 +185,8 @@ class HttpRoutedEntry(Analect[EntryInput, EntryOutput], EntryAnalectMixin):
             orchestrator._tool_orch_params = get_llm_params("tool_orchestrator")
         except CCAConfigError:
             pass  # Falls back to 80B for all iterations
+        # Pass router complexity estimate to orchestrator (controls nudge behavior)
+        orchestrator._estimated_steps = self._route.estimated_steps
 
         await context.invoke_analect(
             orchestrator,
@@ -205,5 +207,10 @@ class HttpRoutedEntry(Analect[EntryInput, EntryOutput], EntryAnalectMixin):
         # text-only response to get the number of tool-calling iterations.
         iters = orchestrator._num_iterations
         self._tool_iterations = max(0, iters - 1) if iters > 0 else 0
+        self._nudge_skipped = orchestrator._nudge_skipped
+        self._circuit_breaker_fired = (
+            orchestrator._error_hint_injected
+            or orchestrator._total_consecutive_errors > 0
+        )
 
         return EntryOutput()

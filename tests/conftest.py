@@ -136,6 +136,8 @@ def trace_test(request, phoenix_tracer):
 
         # Evaluators append annotation dicts here during the test
         span._pending_annotations = []
+        # CCA client stashes metrics here for per-test reporting
+        span._test_metrics = {}
 
         yield span
 
@@ -157,6 +159,29 @@ def trace_test(request, phoenix_tracer):
     provider.force_flush()
     time.sleep(1)
     post_deferred_annotations(span)
+
+    # Per-test summary line for real-time monitoring
+    metrics = getattr(span, "_test_metrics", {})
+    if metrics:
+        outcome = "?"
+        if hasattr(request.node, "rep_call"):
+            outcome = request.node.rep_call.outcome.upper()
+        route = metrics.get("route", "?")
+        steps = metrics.get("estimated_steps", "?")
+        iters = metrics.get("tool_iterations", "?")
+        elapsed_s = metrics.get("execution_time_ms", 0) / 1000
+        flags = []
+        if metrics.get("nudge_skipped"):
+            flags.append("nudge_skipped")
+        if metrics.get("circuit_breaker_fired"):
+            flags.append("CB_FIRED")
+        flag_str = f" [{', '.join(flags)}]" if flags else ""
+        print(
+            f"\n  >> {span_name}: {outcome} | "
+            f"route={route} steps={steps} iters={iters} "
+            f"{elapsed_s:.1f}s{flag_str}",
+            flush=True,
+        )
 
     # Inter-test cooldown: let vLLM drain its queue before the next test
     # starts a new LLM call. Without this, sequential tests pile up

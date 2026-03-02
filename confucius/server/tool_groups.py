@@ -126,12 +126,19 @@ _BASE_MAX_ITERATIONS: Dict[ExpertType, int] = {
 }
 
 
+_SIMPLE_MAX_ITERATIONS = 8
+
+
 def get_max_iterations(route: RouteDecision) -> int:
     """Compute max iterations from route's estimated steps.
 
+    Simple tasks (estimated_steps <= 3) get a low cap to prevent
+    over-iteration on one-liners and short functions.
     Formula: max(base, min(estimated_steps * 2, 200)).
     The base per-route value acts as a floor for that route type.
     """
+    if route.is_simple:  # estimated_steps <= 3
+        return _SIMPLE_MAX_ITERATIONS
     base = _BASE_MAX_ITERATIONS.get(route.expert, 20)
     from_steps = route.estimated_steps * 2
     return max(base, min(from_steps, 200))

@@ -171,6 +171,8 @@ _STEP_ESTIMATION_PROP: Dict[str, Any] = {
         "description": (
             "Estimate the number of distinct steps a developer would take "
             "to complete this task. Examples:\n"
+            "- Answer a code question or write a one-liner: 1\n"
+            "- Write a short function (< 20 lines): 2-3\n"
             "- Fix a typo: 2\n"
             "- Add error handling to one file: 5\n"
             "- Refactor a function and add tests: 12\n"
@@ -704,8 +706,8 @@ def _guard_coding_not_direct(
         )
         decision.expert = ExpertType.CODER
         decision.direct_answer = ""
-        if decision.estimated_steps < 5:
-            decision.estimated_steps = 5
+        if decision.estimated_steps < 3:
+            decision.estimated_steps = 3
         return decision
 
     return decision
@@ -806,8 +808,8 @@ def _guard_action_not_direct(
         )
         decision.expert = ExpertType.CODER
         decision.direct_answer = ""
-        if decision.estimated_steps < 5:
-            decision.estimated_steps = 5
+        if decision.estimated_steps < 3:
+            decision.estimated_steps = 3
         return decision
 
     return decision
@@ -848,8 +850,8 @@ def _guard_copout_not_direct(
         )
         decision.expert = ExpertType.CODER
         decision.direct_answer = ""
-        if decision.estimated_steps < 5:
-            decision.estimated_steps = 5
+        if decision.estimated_steps < 3:
+            decision.estimated_steps = 3
         return decision
 
     return decision

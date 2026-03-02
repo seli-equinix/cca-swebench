@@ -184,6 +184,34 @@ def eval_code_present(result: ChatResult) -> Optional[Dict[str, Any]]:
     }
 
 
+def eval_iteration_efficiency(result: ChatResult) -> Optional[Dict[str, Any]]:
+    """Score based on iteration count vs estimated complexity.
+
+    Simple tasks (estimated_steps <= 3) with >5 iterations = fail.
+    All tasks with >15 iterations = fail.
+    Advisory only — posted to Phoenix but doesn't gate pass/fail.
+    """
+    iters = result.metadata.get("tool_iterations", 0)
+    steps = result.metadata.get("estimated_steps", 10)
+
+    if steps <= 3 and iters > 5:
+        score, label = SCORE_FAIL, "over-iterated"
+    elif iters > 15:
+        score, label = SCORE_FAIL, "excessive"
+    elif iters > steps * 2:
+        score, label = SCORE_PARTIAL, "high"
+    else:
+        score, label = SCORE_PASS, "efficient"
+
+    return {
+        "name": "iteration_efficiency",
+        "annotator_kind": "CODE",
+        "score": score,
+        "label": label,
+        "explanation": f"iterations={iters}, estimated_steps={steps}",
+    }
+
+
 def eval_user_identified(result: ChatResult) -> Optional[Dict[str, Any]]:
     """Score 1.0 if user_identified flag is True in response metadata."""
     identified = result.user_identified
@@ -435,6 +463,11 @@ def evaluate_response(
         ev = evaluator(result)
         evals[ev["name"]] = ev
 
+    # Iteration efficiency — always run (advisory, not gating)
+    ev = eval_iteration_efficiency(result)
+    if ev is not None:
+        evals[ev["name"]] = ev
+
     # Code presence — only for tests that involve code
     if category in ("user", "integration"):
         ev = eval_code_present(result)
@@ -508,6 +541,10 @@ def evaluate_response(
         # users, and cross-session scenarios don't expect identification.
         # Individual tests assert identification when they expect it.
         if ev["name"] == "user_identified":
+            continue
+        # Iteration efficiency is advisory — posted to Phoenix for
+        # visibility but doesn't gate pass/fail.
+        if ev["name"] == "iteration_efficiency":
             continue
         raise AssertionError(
             f"Code evaluator '{ev['name']}' FAILED: "
