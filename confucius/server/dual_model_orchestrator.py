@@ -485,8 +485,11 @@ class DualModelOrchestrator(AnthropicLLMOrchestrator):
 
                 # Research Brief Protocol: inject research assistant context on first
                 # delegation. Tells the research model its role before it runs.
+                # Only inject when dual-model is active (fast model handles research).
+                # SEARCH route has no _tool_orch_params — 35B reads results directly.
                 if (
                     not self._research_executor_injected
+                    and self._tool_orch_params is not None
                     and self._last_tool_names
                     and all(t in RESEARCH_TOOLS for t in self._last_tool_names)
                 ):
