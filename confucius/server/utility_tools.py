@@ -59,6 +59,17 @@ class UtilityToolsExtension(ToolUseExtension):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         object.__setattr__(self, "_http_client", None)
+        object.__setattr__(self, "_search_blocked", False)
+
+    def block_searches(self) -> None:
+        """Block further web_search / fetch_url_content calls.
+
+        Called by the orchestrator's search loop guard after the search limit
+        is reached. Subsequent tool calls return a hard-stop result instead of
+        executing, giving the model no new results to "justify" more searching.
+        """
+        object.__setattr__(self, "_search_blocked", True)
+        logger.info("UtilityToolsExtension: searches blocked (loop guard)")
 
     def _get_client(self) -> httpx.AsyncClient:
         """Lazy shared httpx client — reused across all tool calls."""
@@ -180,6 +191,22 @@ class UtilityToolsExtension(ToolUseExtension):
         """Dispatch tool calls to the appropriate handler."""
         name = tool_use.name
         inp = tool_use.input or {}
+
+        # Hard block: search loop guard has determined enough research was done.
+        # Return a stop-signal result so the model has no new data to loop on.
+        if self._search_blocked and name in ("web_search", "fetch_url_content"):
+            logger.info("UtilityToolsExtension: blocked %s call (loop guard active)", name)
+            return ant.MessageContentToolResult(
+                tool_use_id=tool_use.id,
+                content=json.dumps({
+                    "blocked": True,
+                    "message": (
+                        "Search limit reached. You have completed your research. "
+                        "Do NOT call any more search tools. "
+                        "Write your final answer using the information already gathered."
+                    ),
+                }),
+            )
 
         try:
             if name == "web_search":

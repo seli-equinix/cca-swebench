@@ -527,30 +527,38 @@ class DualModelOrchestrator(AnthropicLLMOrchestrator):
                 # SEARCH loop guard: detect when the primary 35B keeps doing
                 # single web_search calls after an initial batch. Without a
                 # fast-model handoff, there's no evaluation checkpoint to stop
-                # it — it loops indefinitely. After 6+ total research tool calls
-                # inject a "write your answer now" nudge.
+                # it — it loops indefinitely. After 6+ total research tool calls,
+                # HARD-BLOCK further searches via UtilityToolsExtension.block_searches()
+                # so the model receives "blocked" results instead of real data.
+                # A message nudge alone doesn't work — the model ignores it when
+                # it has fresh results that "justify" another search.
                 if (
                     self._tool_orch_params is None  # SEARCH route, no fast model
                     and not self._requires_tool_use  # double-check: SEARCH only
                     and self._search_call_count >= 6
-                    and len(self._last_tool_names) <= 2
-                    and all(t in RESEARCH_TOOLS for t in self._last_tool_names)
                     and not self._synthesis_done
                 ):
                     logger.info(
                         "Search loop guard: %d research tool calls done "
-                        "— injecting write-now nudge",
+                        "— blocking further searches, injecting write-now nudge",
                         self._search_call_count,
                     )
+                    # Hard-block: future web_search / fetch_url_content calls
+                    # return "Search limit reached" instead of real results.
+                    from .utility_tools import UtilityToolsExtension
+                    for ext in self.extensions:
+                        if isinstance(ext, UtilityToolsExtension):
+                            ext.block_searches()
+                            break
                     context.memory_manager.add_messages([
                         CfMessage(
                             type=cf.MessageType.HUMAN,
                             content=(
-                                "You have completed your research ("
-                                f"{self._search_call_count} searches done). "
-                                "STOP searching — write your FINAL answer NOW "
-                                "using the information already gathered. "
-                                "Include source URLs. Do NOT call any more tools."
+                                "Research complete. You have done "
+                                f"{self._search_call_count} searches. "
+                                "No more searches are available. "
+                                "Write your FINAL answer NOW using the "
+                                "information already gathered. Include source URLs."
                             ),
                             additional_kwargs={"__synthetic__": True},
                         )
