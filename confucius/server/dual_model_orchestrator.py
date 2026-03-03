@@ -354,14 +354,6 @@ class DualModelOrchestrator(AnthropicLLMOrchestrator):
                 context.memory_manager.add_messages([
                     CfMessage(type=cf.MessageType.AI, content=text)
                 ])
-        else:
-            # Primary (80B) is writing text — check if it contains code.
-            # If it does AND it also makes tool calls in the same turn,
-            # synthesis must be skipped to prevent duplicate output.
-            if text.strip() and not self._primary_streamed_code:
-                code_signals = ["```", "def ", "class ", "import ", "return "]
-                if any(s in text for s in code_signals):
-                    self._primary_streamed_code = True
 
                 # Capture as research brief for the 80B evaluation checkpoint
                 self._research_brief = text
@@ -385,6 +377,14 @@ class DualModelOrchestrator(AnthropicLLMOrchestrator):
                     len(text),
                 )
             return ""  # Don't stream to user — only 80B speaks
+
+        # Primary (80B) path — track whether it streams code before a tool call.
+        # If it does, synthesis must be skipped to prevent duplicate output.
+        if text.strip() and not self._primary_streamed_code:
+            code_signals = ["```", "def ", "class ", "import ", "return "]
+            if any(s in text for s in code_signals):
+                self._primary_streamed_code = True
+
         return await super().on_llm_output(text, context)
 
     # ── Iteration loop override ───────────────────────────────────
