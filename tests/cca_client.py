@@ -223,25 +223,12 @@ class CCAClient:
                             "circuit_breaker_fired": result.metadata.get("circuit_breaker_fired", False),
                         })
 
-                    # Update parent span input.value / output.value to show the
-                    # full conversation for multi-turn tests. Each cca.chat call
-                    # appends its turn — Phoenix then shows the complete exchange
-                    # at the top level instead of just the last chat's values.
+                    # Accumulate turns so conftest.py can set input.value /
+                    # output.value on the root span after ALL turns complete.
                     if hasattr(test_span, "_test_metrics"):
-                        turns = test_span._test_metrics.setdefault("_turns", [])
-                        turns.append((message, result.content))
-                        if len(turns) == 1:
-                            test_span.set_attribute("input.value", message[:1000])
-                            test_span.set_attribute("output.value", result.content[:1000])
-                        else:
-                            combined_input = "\n\n".join(
-                                f"[Turn {i+1}] {m[:400]}" for i, (m, _) in enumerate(turns)
-                            )
-                            combined_output = "\n\n".join(
-                                f"[Turn {i+1}] {r[:400]}" for i, (_, r) in enumerate(turns)
-                            )
-                            test_span.set_attribute("input.value", combined_input[:2000])
-                            test_span.set_attribute("output.value", combined_output[:2000])
+                        test_span._test_metrics.setdefault("_turns", []).append(
+                            (message, result.content)
+                        )
 
                     span.set_status(StatusCode.OK)
                     return result
