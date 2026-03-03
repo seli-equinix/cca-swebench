@@ -716,7 +716,17 @@ class DualModelOrchestrator(AnthropicLLMOrchestrator):
                         "Dual-model: skipping synthesis — primary already "
                         "streamed a code response (would duplicate output)"
                     )
-                    # Fall through to the completion branch below (no continue)
+                    # Run the same completion sequence as the normal end branch.
+                    # Cannot fall through: we're inside an elif, so the else:break
+                    # branch never fires — we must break explicitly here.
+                    self._synthesis_done = True
+                    try:
+                        await self._on_process_tool_use_queue_complete(context)
+                    except OrchestratorInterruption as exc:
+                        await self._process_interruption(exc, context)
+                        continue
+                    self._strip_synthetic_messages(context)
+                    break
                 else:
                     logger.info(
                         "Dual-model: tool work complete — forcing consolidated response"
