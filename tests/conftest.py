@@ -149,8 +149,8 @@ def trace_test(request, phoenix_tracer):
         turns = span._test_metrics.get("_turns", [])
         if turns:
             if len(turns) == 1:
-                span.set_attribute("input.value", turns[0][0][:1000])
-                span.set_attribute("output.value", turns[0][1][:1000])
+                span.set_attribute("input.value", turns[0][0])
+                span.set_attribute("output.value", turns[0][1])
             else:
                 # Switch span kind to LLM so Phoenix uses the chat/conversation
                 # renderer — each message becomes an independent block.
@@ -162,7 +162,7 @@ def trace_test(request, phoenix_tracer):
                     )
                     span.set_attribute(
                         f"llm.input_messages.{idx}.message.content",
-                        f"[Turn {i + 1}] {msg[:800]}",
+                        f"[Turn {i + 1}] {msg}",
                     )
                     idx += 1
                     if i < len(turns) - 1:
@@ -172,7 +172,7 @@ def trace_test(request, phoenix_tracer):
                         )
                         span.set_attribute(
                             f"llm.input_messages.{idx}.message.content",
-                            f"[Turn {i + 1}] {resp[:800]}",
+                            f"[Turn {i + 1}] {resp}",
                         )
                         idx += 1
                 # Final assistant response is the output
@@ -181,7 +181,7 @@ def trace_test(request, phoenix_tracer):
                 )
                 span.set_attribute(
                     "llm.output_messages.0.message.content",
-                    f"[Turn {len(turns)}] {turns[-1][1][:1000]}",
+                    f"[Turn {len(turns)}] {turns[-1][1]}",
                 )
 
         if hasattr(request.node, "rep_call"):
