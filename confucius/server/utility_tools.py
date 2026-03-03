@@ -155,7 +155,7 @@ class UtilityToolsExtension(ToolUseExtension):
                     "results. Strips HTML navigation, scripts, and styles "
                     "to return clean text.\n\n"
                     "Supports http/https URLs only. Internal/private IPs "
-                    "are blocked for security. Content is truncated at 50KB."
+                    "are blocked for security. Content is truncated at 500KB."
                 ),
                 input_schema={
                     "type": "object",
@@ -405,9 +405,8 @@ class UtilityToolsExtension(ToolUseExtension):
             except ImportError:
                 pass  # bs4 not available, return raw
 
-        # Truncate at 50KB
-        truncated = len(content) > 50_000
-        content = content[:50_000]
+        # Truncate at 500KB (vLLM context is 1M tokens; 500KB ≈ 125K tokens per fetch)
+        content = content[:500_000]
 
         return json.dumps({
             "url": str(resp.url),
