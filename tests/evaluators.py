@@ -348,8 +348,8 @@ def _run_llm_classify(
     category_desc = category_labels.get(category, category)
 
     prompt = template.format(
-        message=message[:2000],
-        response=response[:2000],
+        message=message,
+        response=response,
         category=category_desc,
     )
 
@@ -525,7 +525,6 @@ def evaluate_response(
 
     # --- Gate on code evaluator failures ---
     # CODE evaluators are deterministic and catch real problems.
-    # LLM judge results remain advisory (posted to Phoenix but don't gate).
     for ev in evals.values():
         if ev["annotator_kind"] != "CODE" or ev["score"] != SCORE_FAIL:
             continue
@@ -534,21 +533,32 @@ def evaluate_response(
             continue
         # Code presence is advisory — not all "user" tests ask for code.
         # Individual tests assert code presence when they expect it.
-        # Posted to Phoenix for visibility but doesn't gate pass/fail.
         if ev["name"] == "code_present":
             continue
         # User identification is advisory — anonymous sessions, deleted
         # users, and cross-session scenarios don't expect identification.
-        # Individual tests assert identification when they expect it.
         if ev["name"] == "user_identified":
             continue
-        # Iteration efficiency is advisory — posted to Phoenix for
-        # visibility but doesn't gate pass/fail.
+        # Iteration efficiency is advisory.
         if ev["name"] == "iteration_efficiency":
             continue
         raise AssertionError(
             f"Code evaluator '{ev['name']}' FAILED: "
             f"label={ev['label']}, explanation={ev.get('explanation', '')}"
         )
+
+    # --- Gate on LLM judge hard failures ---
+    # "poor" quality or "failed" completion = test failure.
+    # "adequate"/"partial" = advisory (posted to Phoenix, doesn't gate).
+    # "error" = judge call failed (Spark2 down etc.) — skip, don't gate.
+    # This closes the gap between "system works" and "production quality".
+    for ev in evals.values():
+        if ev["annotator_kind"] != "LLM":
+            continue
+        if ev["label"] in ("poor", "failed"):
+            raise AssertionError(
+                f"LLM judge '{ev['name']}' FAILED: "
+                f"label={ev['label']}, explanation={ev.get('explanation', '')}"
+            )
 
     return evals
