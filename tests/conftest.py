@@ -143,25 +143,23 @@ def trace_test(request, phoenix_tracer):
 
         # Set input.value / output.value from accumulated chat turns.
         # Done here (after yield) so ALL turns are collected before we write.
-        # Single-turn: plain message → response.
-        # Multi-turn: input.value = full interleaved conversation (question +
-        # answer together per turn so they're easy to match); output.value =
-        # final response only.
+        # Single-turn: plain message / response.
+        # Multi-turn: labeled turns in each field so Turn N input pairs with
+        # Turn N output when reading them side by side.
         turns = span._test_metrics.get("_turns", [])
         if turns:
             if len(turns) == 1:
                 span.set_attribute("input.value", turns[0][0][:1000])
                 span.set_attribute("output.value", turns[0][1][:1000])
             else:
-                parts = []
-                for i, (msg, resp) in enumerate(turns):
-                    parts.append(
-                        f"── Turn {i + 1} ──\n"
-                        f"User: {msg[:300]}\n"
-                        f"Assistant: {resp[:300]}"
-                    )
-                span.set_attribute("input.value", "\n\n".join(parts)[:3000])
-                span.set_attribute("output.value", turns[-1][1][:1000])
+                span.set_attribute("input.value", "\n\n".join(
+                    f"[Turn {i + 1}] {m[:400]}"
+                    for i, (m, _) in enumerate(turns)
+                )[:2000])
+                span.set_attribute("output.value", "\n\n".join(
+                    f"[Turn {i + 1}] {r[:400]}"
+                    for i, (_, r) in enumerate(turns)
+                )[:2000])
 
         if hasattr(request.node, "rep_call"):
             rep = request.node.rep_call
