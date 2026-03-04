@@ -341,6 +341,9 @@ def session_cleanup(cca):
     try:
         users_data = cca.list_users()
         test_prefixes = (
+            # Flow tests (consolidated)
+            "Onboard_", "Memory_", "CRUD_", "Lifecycle_",
+            # Legacy prefixes (safety net for stragglers)
             "TestUser_", "SkillUser_", "AliasUser_", "AliasChk_",
             "Aliaschk_", "RmAlias_", "Rmalias_",
             "RmSkill_", "Rmskill_", "SkillCheck_", "Skillcheck_",
@@ -355,7 +358,7 @@ def session_cleanup(cca):
             "InferKnown_", "Inferknown_",
             "CtxUser_", "Ctxuser_", "CtxFacts_", "Ctxfacts_",
             "CtxEnrich_", "Ctxenrich_",
-            "Lifecycle_", "Persist_", "Recall_",
+            "Persist_", "Recall_",
             "Overwrite_", "RmFact_", "Rmfact_", "RmPref_", "Rmpref_",
         )
         for user in users_data.get("users", []):

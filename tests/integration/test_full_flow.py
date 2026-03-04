@@ -1,7 +1,7 @@
-"""End-to-end integration tests for user lifecycle flows.
+"""End-to-end integration test: full user lifecycle.
 
-Tests multi-step user flows: fact persistence across sessions
-and full user lifecycle (create → enrich → recall → search → verify → delete).
+Tests the complete journey a real person would have with CCA:
+create → enrich across sessions → web search → REST verify → delete.
 
 The server auto-creates users when it detects a name introduction.
 Tests validate state via the /users REST API for ground-truth.
@@ -14,48 +14,6 @@ import pytest
 from tests.evaluators import evaluate_response
 
 pytestmark = [pytest.mark.integration, pytest.mark.user]
-
-
-class TestRememberAndRecall:
-    """Store facts in session 1, recall them in session 2."""
-
-    def test_facts_persist_across_sessions(self, cca, trace_test, judge_model):
-        """Facts stored in one session should be recalled in another."""
-        name = f"Recall_{uuid.uuid4().hex[:6]}"
-        company = f"RecallCorp_{uuid.uuid4().hex[:4]}"
-        sid1 = f"test-rec1-{uuid.uuid4().hex[:8]}"
-        sid2 = f"test-rec2-{uuid.uuid4().hex[:8]}"
-        try:
-            # Session 1: Identify + store fact via coding task
-            cca.chat(
-                f"Hello I'm {name}. I work at {company}. "
-                f"Write a Python function to reverse a string.",
-                session_id=sid1,
-            )
-
-            # Session 2: New session, ask to recall
-            message = (
-                f"Hi, I'm {name}. Where do I work? "
-                f"Also write a one-liner to check if a string is empty."
-            )
-            result = cca.chat(message, session_id=sid2)
-
-            evaluate_response(
-                result, message, trace_test, judge_model, "integration",
-            )
-
-            trace_test.set_attribute("cca.test.response", result.content[:500])
-            assert result.content, "Session 2 returned empty"
-
-            content_lower = result.content.lower()
-            recalled = any(w in content_lower for w in [
-                company.lower(), "employer", name.lower(),
-            ])
-            trace_test.set_attribute("cca.test.fact_recalled", recalled)
-            assert recalled, \
-                f"Agent didn't recall '{company}': {result.content[:200]}"
-        finally:
-            cca.cleanup_test_user(name)
 
 
 class TestFullUserLifecycle:
