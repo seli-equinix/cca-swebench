@@ -33,7 +33,7 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
-from ..core.config import RouterConfig
+from ..core.config import RouterConfig, ToolRouterConfig
 from opentelemetry.trace import StatusCode
 
 from ..core.tracing import (
@@ -389,6 +389,339 @@ ROUTING_TOOLS: List[Dict[str, Any]] = [
         }
     },
 ]
+
+
+# ========================= Tool Selection (Phase 2) =========================
+
+# Tool definitions for Functionary-based tool selection during escalation.
+# When the agent gets stuck (no tools available for the task), Functionary
+# analyzes the agent's output and calls one or more of these to select
+# which tool groups to enable.
+
+TOOL_SELECTION_TOOLS: List[Dict[str, Any]] = [
+    {
+        "type": "function",
+        "function": {
+            "name": "enable_file_editor",
+            "description": (
+                "Enable file viewing/editing (str_replace_editor). "
+                "For creating, viewing, or modifying code files, configs, scripts."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "reason": {
+                        "type": "string",
+                        "description": "Why the agent needs file editing tools",
+                    }
+                },
+                "required": ["reason"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "enable_shell",
+            "description": (
+                "Enable bash/command execution. "
+                "For running commands, scripts, pip install, docker, git."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "reason": {
+                        "type": "string",
+                        "description": "Why the agent needs shell execution",
+                    }
+                },
+                "required": ["reason"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "enable_web_search",
+            "description": (
+                "Enable web search + URL fetching. "
+                "For finding online docs, news, current information."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "reason": {
+                        "type": "string",
+                        "description": "Why the agent needs web search tools",
+                    }
+                },
+                "required": ["reason"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "enable_memory",
+            "description": (
+                "Enable planning memory (write_memory, read_memory). "
+                "For complex multi-step tasks needing a plan."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "reason": {
+                        "type": "string",
+                        "description": "Why the agent needs memory/planning tools",
+                    }
+                },
+                "required": ["reason"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "enable_code_search",
+            "description": (
+                "Enable codebase search (search_codebase, search_knowledge). "
+                "For finding functions, classes, files in indexed repositories."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "reason": {
+                        "type": "string",
+                        "description": "Why the agent needs code search tools",
+                    }
+                },
+                "required": ["reason"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "no_additional_tools",
+            "description": (
+                "Current tools are sufficient. The agent can complete "
+                "the task with what it has."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "reason": {
+                        "type": "string",
+                        "description": "Why no additional tools are needed",
+                    }
+                },
+                "required": ["reason"],
+            },
+        },
+    },
+]
+
+TOOL_SELECTOR_SYSTEM_PROMPT = """\
+You are a tool selector for CCA (Confucius Code Agent). The main agent is \
+stuck — it needs tools it doesn't currently have.
+
+Analyze the agent's last output and determine which tool groups to enable.
+
+Available tool groups:
+- file_editor: str_replace_editor for creating/editing files (code, configs, scripts)
+- shell: bash command execution (run commands, install packages, build, git)
+- web_search: search the internet, read web pages, find documentation
+- memory: write_memory/read_memory for planning and tracking complex tasks
+- code_search: search_codebase/search_knowledge for finding code in the project
+
+Rules:
+- Enable ONLY the tools the agent actually needs — fewer is better (1-2 ideal)
+- If the agent output code blocks (```) or mentions creating files → enable file_editor
+- If the agent describes running commands or installing packages → enable shell
+- If the agent wants to search online or find docs → enable web_search
+- If the task needs planning (multiple steps) → enable memory
+- If the agent needs to find existing code → enable code_search
+- Call no_additional_tools if the agent's current tools are sufficient
+
+The agent's current route: {current_route}
+Currently available tools: {current_tools}\
+"""
+
+# Map Functionary tool-selection function names → ToolGroup values.
+# Imported lazily in select_tools_for_escalation() to avoid circular import
+# (tool_groups imports from expert_router).
+_TOOL_FUNC_TO_GROUP_NAME = {
+    "enable_file_editor": "file",
+    "enable_shell": "shell",
+    "enable_web_search": "web",
+    "enable_memory": "memory",
+    "enable_code_search": "code_search",
+}
+
+
+async def select_tools_for_escalation(
+    agent_output: str,
+    current_route: str,
+    current_tools: list[str],
+    config: ToolRouterConfig,
+) -> list[str]:
+    """Ask Functionary which tool groups the agent needs.
+
+    Returns list of tool group names to enable (e.g., ["file", "shell"]).
+    Returns empty list if Functionary says no additional tools needed.
+    Falls back to ["file", "shell"] on error.
+    """
+    tracer = get_tracer()
+
+    with tracer.start_as_current_span("cca.tool_selector") as span:
+        span.set_attribute(OPENINFERENCE_SPAN_KIND, "LLM")
+        span.set_attribute(INPUT_VALUE, agent_output[:500])
+        span.set_attribute(LLM_MODEL_NAME, "functionary-small-v3.2")
+        span.set_attribute("cca.tool_selector.route", current_route)
+        span.set_attribute("cca.tool_selector.current_tools", str(current_tools[:20]))
+
+        start = time.monotonic()
+        client = await _get_client()
+
+        system_prompt = TOOL_SELECTOR_SYSTEM_PROMPT.format(
+            current_route=current_route,
+            current_tools=", ".join(current_tools),
+        )
+
+        messages: List[Dict[str, str]] = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": agent_output[:2000]},
+        ]
+
+        payload = {
+            "model": "functionary",
+            "messages": messages,
+            "tools": TOOL_SELECTION_TOOLS,
+            "tool_choice": "required",
+            "temperature": config.temperature,
+            "max_tokens": 256,
+        }
+
+        # Record OpenInference attributes for Phoenix tracing
+        if _HAS_OPENINFERENCE:
+            try:
+                oi_msgs = [Message(role=m["role"], content=m["content"]) for m in messages]
+                for k, v in get_llm_input_message_attributes(oi_msgs).items():
+                    span.set_attribute(k, v)
+                oi_tools = [Tool(json_schema=t) for t in TOOL_SELECTION_TOOLS]
+                for k, v in get_llm_tool_attributes(oi_tools).items():
+                    span.set_attribute(k, v)
+            except Exception as e:
+                logger.warning("Failed to set tool_selector OpenInference attrs: %s", e)
+
+        try:
+            resp = await client.post(
+                f"{config.url}/v1/chat/completions",
+                json=payload,
+                timeout=config.timeout_ms / 1000.0,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        except httpx.TimeoutException:
+            elapsed = (time.monotonic() - start) * 1000
+            logger.warning(
+                "Tool selector timed out (%.0fms), falling back to file+shell",
+                elapsed,
+            )
+            span.set_attribute("cca.tool_selector.status", "timeout")
+            span.set_status(StatusCode.ERROR, "timeout")
+            return ["file", "shell"]
+        except Exception as e:
+            elapsed = (time.monotonic() - start) * 1000
+            logger.error("Tool selector error: %s", e)
+            span.set_attribute("cca.tool_selector.status", "error")
+            span.set_attribute("cca.tool_selector.error", str(e)[:200])
+            span.set_status(StatusCode.ERROR, str(e)[:200])
+            return ["file", "shell"]
+
+        elapsed_ms = (time.monotonic() - start) * 1000
+
+        # Record response in OpenInference format
+        if _HAS_OPENINFERENCE:
+            try:
+                resp_msg = data.get("choices", [{}])[0].get("message", {})
+                oi_tool_calls = []
+                for tc in resp_msg.get("tool_calls", []):
+                    fn = tc.get("function", {})
+                    oi_tool_calls.append(ToolCall(
+                        function=ToolCallFunction(
+                            name=fn.get("name", ""),
+                            arguments=fn.get("arguments", "{}"),
+                        )
+                    ))
+                oi_out = [Message(
+                    role=resp_msg.get("role", "assistant"),
+                    content=resp_msg.get("content"),
+                    tool_calls=oi_tool_calls or None,
+                )]
+                for k, v in get_llm_output_message_attributes(oi_out).items():
+                    span.set_attribute(k, v)
+            except Exception as e:
+                logger.warning("Failed to set tool_selector output attrs: %s", e)
+
+        # Parse tool calls from response
+        choices = data.get("choices", [])
+        if not choices:
+            span.set_attribute("cca.tool_selector.status", "empty_choices")
+            return ["file", "shell"]
+
+        message = choices[0].get("message", {})
+        tool_calls = message.get("tool_calls", [])
+
+        if not tool_calls:
+            logger.warning("No tool call from tool selector, falling back")
+            span.set_attribute("cca.tool_selector.status", "no_tool_call")
+            return ["file", "shell"]
+
+        # Extract requested tool groups from ALL tool calls
+        requested_groups: list[str] = []
+        for tc in tool_calls:
+            func_name = tc.get("function", {}).get("name", "")
+            func_args_str = tc.get("function", {}).get("arguments", "{}")
+
+            if func_name == "no_additional_tools":
+                logger.info(
+                    "Tool selector: no additional tools needed (%.0fms)",
+                    elapsed_ms,
+                )
+                span.set_attribute("cca.tool_selector.status", "no_tools_needed")
+                span.set_attribute("cca.tool_selector.elapsed_ms", elapsed_ms)
+                span.set_status(StatusCode.OK)
+                return []
+
+            group_name = _TOOL_FUNC_TO_GROUP_NAME.get(func_name)
+            if group_name and group_name not in requested_groups:
+                try:
+                    reason = json.loads(func_args_str).get("reason", "")
+                except json.JSONDecodeError:
+                    reason = ""
+                logger.info(
+                    "Tool selector: enable %s — %s", group_name, reason[:80],
+                )
+                requested_groups.append(group_name)
+
+        span.set_attribute("cca.tool_selector.status", "success")
+        span.set_attribute("cca.tool_selector.elapsed_ms", elapsed_ms)
+        span.set_attribute("cca.tool_selector.groups", str(requested_groups))
+        span.set_attribute(OUTPUT_VALUE, str(requested_groups))
+        span.set_status(StatusCode.OK)
+
+        # Token usage
+        usage = data.get("usage", {})
+        if usage:
+            span.set_attribute("llm.token_count.prompt", usage.get("prompt_tokens", 0))
+            span.set_attribute("llm.token_count.completion", usage.get("completion_tokens", 0))
+
+        logger.info(
+            "Tool selector: enable %s (%.0fms)",
+            requested_groups, elapsed_ms,
+        )
+        return requested_groups
 
 
 # System prompt for the classifier

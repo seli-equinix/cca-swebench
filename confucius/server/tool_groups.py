@@ -157,7 +157,123 @@ def _get_commands_for_route(expert: ExpertType) -> Optional[Dict[str, str]]:
     return None
 
 
+# ========================= Pool Groups =========================
+
+# Tool groups eligible for dynamic escalation (pool building).
+# Excludes USER (session-bound, already on USER route) and PLANNER
+# (prompt-only, no tool_use). These are the groups that can be
+# selectively enabled mid-loop by the Functionary tool selector.
+POOLABLE_GROUPS: frozenset[ToolGroup] = frozenset({
+    ToolGroup.FILE,
+    ToolGroup.SHELL,
+    ToolGroup.MEMORY,
+    ToolGroup.WEB,
+    ToolGroup.USER_MEMORY,
+    ToolGroup.CODE_SEARCH,
+    ToolGroup.GRAPH,
+    ToolGroup.DOCUMENT,
+    ToolGroup.NOTES,
+    ToolGroup.RULES,
+})
+
+
 # ========================= Extension Builder =========================
+
+
+def _build_extension_for_group(
+    group: ToolGroup,
+    expert: ExpertType,
+    commands: Optional[Dict[str, str]],
+    user_extension: Optional[Extension],
+    backend_clients: Optional[Any],
+    session_id: str,
+    user_id: Optional[str],
+) -> Optional[Extension]:
+    """Build a single extension for a tool group.
+
+    Returns None if the group's prerequisites aren't met (e.g., no
+    backend_clients for CODE_SEARCH, no user_extension for USER).
+    """
+    if group == ToolGroup.PLANNER:
+        return LLMCodingArchitectExtension()
+
+    elif group == ToolGroup.FILE:
+        return FileEditExtension(
+            max_output_lines=500,
+            enable_tool_use=True,
+        )
+
+    elif group == ToolGroup.SHELL:
+        if commands is not None:
+            return CommandLineExtension(
+                allowed_commands=commands,
+                max_output_lines=500 if expert == ExpertType.INFRASTRUCTURE else 300,
+                allow_bash_script=True,
+                enable_tool_use=True,
+            )
+
+    elif group == ToolGroup.MEMORY:
+        return HierarchicalMemoryExtension()
+
+    elif group == ToolGroup.USER:
+        if user_extension is not None:
+            return user_extension
+
+    elif group == ToolGroup.WEB:
+        return UtilityToolsExtension()
+
+    elif group == ToolGroup.USER_MEMORY:
+        if user_extension is not None:
+            from .user.tools_extension import UserToolsExtension
+            if isinstance(user_extension, UserToolsExtension):
+                return UserMemoryExtension(
+                    session_mgr=user_extension._session_mgr,
+                    session=user_extension._session,
+                    critical_facts=user_extension._critical_facts,
+                )
+
+    elif group == ToolGroup.CODE_SEARCH:
+        if backend_clients is not None:
+            from .code_intelligence.search_extension import CodeSearchExtension
+            return CodeSearchExtension(
+                backend_clients=backend_clients,
+                session_id=session_id,
+                user_id=user_id,
+            )
+
+    elif group == ToolGroup.GRAPH:
+        if backend_clients is not None and backend_clients.memgraph is not None:
+            from .code_intelligence.graph_extension import GraphToolsExtension
+            return GraphToolsExtension(
+                backend_clients=backend_clients,
+            )
+
+    elif group == ToolGroup.DOCUMENT:
+        if backend_clients is not None:
+            from .code_intelligence.document_extension import DocumentToolsExtension
+            return DocumentToolsExtension(
+                backend_clients=backend_clients,
+                session_id=session_id,
+                user_id=user_id,
+            )
+
+    elif group == ToolGroup.NOTES:
+        if backend_clients is not None and user_id:
+            from .note_search_extension import NoteSearchExtension
+            return NoteSearchExtension(
+                backend_clients=backend_clients,
+                user_id=user_id,
+            )
+
+    elif group == ToolGroup.RULES:
+        if backend_clients is not None:
+            from .code_intelligence.rules_extension import RulesToolsExtension
+            return RulesToolsExtension(
+                backend_clients=backend_clients,
+                user_id=user_id,
+            )
+
+    return None
 
 
 def build_extensions_for_route(
@@ -190,87 +306,13 @@ def build_extensions_for_route(
     extensions: List[Extension] = []
 
     for group in groups:
-        if group == ToolGroup.PLANNER:
-            extensions.append(LLMCodingArchitectExtension())
-
-        elif group == ToolGroup.FILE:
-            extensions.append(FileEditExtension(
-                max_output_lines=500,
-                enable_tool_use=True,
-            ))
-
-        elif group == ToolGroup.SHELL:
-            if commands is not None:
-                extensions.append(CommandLineExtension(
-                    allowed_commands=commands,
-                    max_output_lines=500 if expert == ExpertType.INFRASTRUCTURE else 300,
-                    allow_bash_script=True,
-                    enable_tool_use=True,
-                ))
-
-        elif group == ToolGroup.MEMORY:
-            extensions.append(HierarchicalMemoryExtension())
-
-        elif group == ToolGroup.USER:
-            if user_extension is not None:
-                extensions.append(user_extension)
-
-        elif group == ToolGroup.WEB:
-            extensions.append(UtilityToolsExtension())
-
-        elif group == ToolGroup.USER_MEMORY:
-            # Lightweight 3-tool user memory for non-USER routes.
-            # Extract session_mgr/session/critical_facts from the
-            # pre-built UserToolsExtension (same session context).
-            if user_extension is not None:
-                from .user.tools_extension import UserToolsExtension
-                if isinstance(user_extension, UserToolsExtension):
-                    extensions.append(UserMemoryExtension(
-                        session_mgr=user_extension._session_mgr,
-                        session=user_extension._session,
-                        critical_facts=user_extension._critical_facts,
-                    ))
-
-        elif group == ToolGroup.CODE_SEARCH:
-            if backend_clients is not None:
-                from .code_intelligence.search_extension import CodeSearchExtension
-                extensions.append(CodeSearchExtension(
-                    backend_clients=backend_clients,
-                    session_id=session_id,
-                    user_id=user_id,
-                ))
-
-        elif group == ToolGroup.GRAPH:
-            if backend_clients is not None and backend_clients.memgraph is not None:
-                from .code_intelligence.graph_extension import GraphToolsExtension
-                extensions.append(GraphToolsExtension(
-                    backend_clients=backend_clients,
-                ))
-
-        elif group == ToolGroup.DOCUMENT:
-            if backend_clients is not None:
-                from .code_intelligence.document_extension import DocumentToolsExtension
-                extensions.append(DocumentToolsExtension(
-                    backend_clients=backend_clients,
-                    session_id=session_id,
-                    user_id=user_id,
-                ))
-
-        elif group == ToolGroup.NOTES:
-            if backend_clients is not None and user_id:
-                from .note_search_extension import NoteSearchExtension
-                extensions.append(NoteSearchExtension(
-                    backend_clients=backend_clients,
-                    user_id=user_id,
-                ))
-
-        elif group == ToolGroup.RULES:
-            if backend_clients is not None:
-                from .code_intelligence.rules_extension import RulesToolsExtension
-                extensions.append(RulesToolsExtension(
-                    backend_clients=backend_clients,
-                    user_id=user_id,
-                ))
+        ext = _build_extension_for_group(
+            group, expert, commands,
+            user_extension, backend_clients,
+            session_id, user_id,
+        )
+        if ext is not None:
+            extensions.append(ext)
 
     # Conditionally add expert extensions for complex tasks
     if route.is_complex:  # estimated_steps >= 8
@@ -301,3 +343,71 @@ def build_extensions_for_route(
     )
 
     return extensions
+
+
+def build_tool_pool(
+    route: RouteDecision,
+    user_extension: Optional[Extension] = None,
+    backend_clients: Optional[Any] = None,
+    session_id: str = "",
+    user_id: Optional[str] = None,
+) -> Dict[ToolGroup, Extension]:
+    """Build a pool of disabled extensions for dynamic escalation.
+
+    Returns extensions for tool groups that the CODER route has but the
+    current route does not. Pool extensions are built with tool_use
+    disabled — they're invisible to the LLM until escalation enables them.
+
+    CODER and INFRASTRUCTURE routes already have all tools, so this
+    returns an empty dict for those routes (zero overhead).
+
+    Args:
+        route: The RouteDecision from the Functionary router.
+        user_extension: Pre-built UserToolsExtension (session-bound).
+        backend_clients: Shared BackendClients for code intelligence extensions.
+        session_id: Current session ID (for document scoping).
+        user_id: Current user ID (for user knowledge collections).
+
+    Returns:
+        Dict mapping ToolGroup → disabled Extension for selective enablement.
+    """
+    expert = route.expert
+
+    # CODER and INFRASTRUCTURE already have everything — empty pool
+    if expert in (ExpertType.CODER, ExpertType.INFRASTRUCTURE):
+        return {}
+
+    current_groups = set(ROUTE_TOOL_GROUPS.get(expert, []))
+    coder_groups = set(ROUTE_TOOL_GROUPS[ExpertType.CODER])
+
+    # Pool = CODER groups minus current groups, filtered to poolable only
+    pool_groups = (coder_groups - current_groups) & POOLABLE_GROUPS
+
+    if not pool_groups:
+        return {}
+
+    # Pool SHELL always uses CODER's command allowlist (conservative)
+    pool_commands = get_allowed_commands()
+    pool: Dict[ToolGroup, Extension] = {}
+
+    for group in pool_groups:
+        ext = _build_extension_for_group(
+            group, ExpertType.CODER, pool_commands,
+            user_extension, backend_clients,
+            session_id, user_id,
+        )
+        if ext is not None:
+            # Disable the extension — invisible to the LLM until escalation
+            if hasattr(ext, 'enable_tool_use'):
+                ext.enable_tool_use = False
+            if hasattr(ext, 'included_in_system_prompt'):
+                ext.included_in_system_prompt = False
+            pool[group] = ext
+
+    if pool:
+        logger.info(
+            f"Built tool pool with {len(pool)} groups for {expert.value}: "
+            f"{[g.value for g in pool]}"
+        )
+
+    return pool

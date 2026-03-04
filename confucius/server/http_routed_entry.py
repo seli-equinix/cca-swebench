@@ -39,8 +39,10 @@ from ..orchestrator.types import OrchestratorInput
 from ..analects.code.tasks import get_task_definition, get_search_task_definition
 from ..analects.infrastructure.tasks import get_infra_task_definition
 from .expert_router import ExpertType, RouteDecision
+from ..core.config import get_tool_router_config
 from .tool_groups import (
     build_extensions_for_route,
+    build_tool_pool,
     get_max_iterations,
 )
 from .user.user_context import get_user_task_definition
@@ -100,6 +102,8 @@ class HttpRoutedEntry(Analect[EntryInput, EntryOutput], EntryAnalectMixin):
 
     # Populated after impl() runs — exposes orchestrator metrics
     _tool_iterations: int = PrivateAttr(default=0)
+    _tools_escalated: bool = PrivateAttr(default=False)
+    _escalated_groups: list = PrivateAttr(default_factory=list)
 
     def __init__(
         self,
@@ -198,6 +202,28 @@ class HttpRoutedEntry(Analect[EntryInput, EntryOutput], EntryAnalectMixin):
                 pass  # Falls back to primary model for all iterations
         # Pass router complexity estimate to orchestrator (controls nudge behavior)
         orchestrator._estimated_steps = self._route.estimated_steps
+        orchestrator._route_name = expert.value
+
+        # Dynamic tool escalation: build pool of disabled extensions
+        tool_router_config = get_tool_router_config()
+        if tool_router_config.enabled:
+            pool = build_tool_pool(
+                route=self._route,
+                user_extension=self._user_extension,
+                backend_clients=self._backend_clients,
+                session_id=self._session_id,
+                user_id=self._user_id,
+            )
+            if pool:
+                # Add pool extensions to the orchestrator's extension list
+                # (disabled — invisible until escalation enables them)
+                orchestrator.extensions.extend(pool.values())
+                orchestrator._tool_pool = pool
+                orchestrator._tool_router_config = tool_router_config
+                logger.info(
+                    "Tool escalation pool: %d groups for %s route",
+                    len(pool), expert.value,
+                )
         # SEARCH allows inline responses (informational queries have no side effects).
         # CODER/INFRA/USER all require tool use — nudge fires when no tools called
         # and model just describes actions instead of executing them.
@@ -228,5 +254,7 @@ class HttpRoutedEntry(Analect[EntryInput, EntryOutput], EntryAnalectMixin):
                 orchestrator._error_hint_injected
                 or orchestrator._total_consecutive_errors > 0
             )
+            self._tools_escalated = orchestrator._escalation_count > 0
+            self._escalated_groups = list(orchestrator._escalated_groups)
 
         return EntryOutput()

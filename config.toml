@@ -165,12 +165,12 @@ timeout_ms = 10000                     # Classification timeout (generous for co
 fallback_entry = "coder"               # If classification fails, use this entry
 temperature = 0.1                      # Low temp for deterministic routing
 
-# In-loop tool selection (Phase 2 — disabled for now)
+# In-loop tool selection (Phase 2 — Functionary-based smart tool escalation)
 [tool_router]
-enabled = false
+enabled = true
 url = "http://192.168.4.204:8001"
-confidence_threshold = 0.8
-mechanical_turns_only = true
+timeout_ms = 10000
+temperature = 0.1
 
 # ──────────────────────────────────────────────
 # CODE INTELLIGENCE — Workspace Indexer

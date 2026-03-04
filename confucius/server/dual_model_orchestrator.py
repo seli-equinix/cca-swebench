@@ -156,6 +156,13 @@ class DualModelOrchestrator(AnthropicLLMOrchestrator):
     # containing code alongside a tool call.  If set, synthesis must be
     # skipped — otherwise the 80B rewrites its entire response a second time.
     _primary_streamed_code: bool = PrivateAttr(default=False)
+    # Dynamic tool escalation (Phase 2): pool of disabled extensions that
+    # can be selectively enabled mid-loop by the Functionary tool selector.
+    _tool_pool: dict = PrivateAttr(default_factory=dict)
+    _escalation_count: int = PrivateAttr(default=0)
+    _escalated_groups: list = PrivateAttr(default_factory=list)
+    _tool_router_config: object = PrivateAttr(default=None)
+    _route_name: str = PrivateAttr(default="unknown")
 
     # ── Model selection ──────────────────────────────────────────
 
@@ -386,6 +393,132 @@ class DualModelOrchestrator(AnthropicLLMOrchestrator):
                 self._primary_streamed_code = True
 
         return await super().on_llm_output(text, context)
+
+    # ── Dynamic tool escalation ───────────────────────────────────
+
+    async def _select_and_escalate(
+        self, context: AnalectRunContext
+    ) -> list[str]:
+        """Ask Functionary which tool groups to enable and activate them.
+
+        Returns list of tool names that were newly enabled (for injection
+        into the nudge/continuation message). Returns empty list if
+        Functionary says no additional tools are needed or if the pool
+        is empty.
+        """
+        if not self._tool_pool or self._tool_router_config is None:
+            return []
+
+        # Collect the agent's last assistant text from memory
+        last_text = ""
+        msgs = context.memory_manager.get_session_memory().messages
+        for msg in reversed(msgs):
+            if msg.type == cf.MessageType.AI and msg.content:
+                content = msg.content
+                if isinstance(content, str):
+                    last_text = content
+                elif isinstance(content, list):
+                    last_text = " ".join(
+                        c.get("text", "") if isinstance(c, dict) else str(c)
+                        for c in content
+                    )
+                break
+
+        if not last_text:
+            return []
+
+        # Collect current tool names from enabled extensions
+        current_tool_names: list[str] = []
+        for ext in self._enabled_tool_use_extensions:
+            try:
+                for tool in await ext.tools:
+                    name = getattr(tool, 'name', None)
+                    if name:
+                        current_tool_names.append(name)
+            except Exception:
+                pass
+
+        # Call Functionary tool selector
+        from .expert_router import select_tools_for_escalation
+        requested_groups = await select_tools_for_escalation(
+            agent_output=last_text[:2000],
+            current_route=getattr(self, '_route_name', 'unknown'),
+            current_tools=current_tool_names,
+            config=self._tool_router_config,
+        )
+
+        if not requested_groups:
+            return []
+
+        # Map group names → ToolGroup enum and enable matching pool extensions
+        from .tool_groups import ToolGroup
+        enabled_names: list[str] = []
+
+        for group_name in requested_groups:
+            # Find matching ToolGroup
+            try:
+                tg = ToolGroup(group_name)
+            except ValueError:
+                logger.warning("Unknown tool group from selector: %s", group_name)
+                continue
+
+            ext = self._tool_pool.pop(tg, None)
+            if ext is None:
+                continue
+
+            # Enable the extension
+            if hasattr(ext, 'enable_tool_use'):
+                ext.enable_tool_use = True
+            if hasattr(ext, 'included_in_system_prompt'):
+                ext.included_in_system_prompt = True
+
+            # Collect enabled tool names for the injection message
+            try:
+                for tool in await ext.tools:
+                    name = getattr(tool, 'name', None)
+                    if name:
+                        enabled_names.append(name)
+            except Exception:
+                enabled_names.append(tg.value)
+
+            self._escalated_groups.append(tg.value)
+            logger.info(
+                "Escalation: enabled %s (%d tools)",
+                tg.value, len(enabled_names),
+            )
+
+        if enabled_names:
+            self._escalation_count += 1
+            # Safety valve: after 3 escalations, enable all remaining
+            if self._escalation_count >= 3 and self._tool_pool:
+                logger.info(
+                    "Escalation safety valve: enabling all %d remaining pool groups",
+                    len(self._tool_pool),
+                )
+                for tg, ext in list(self._tool_pool.items()):
+                    if hasattr(ext, 'enable_tool_use'):
+                        ext.enable_tool_use = True
+                    if hasattr(ext, 'included_in_system_prompt'):
+                        ext.included_in_system_prompt = True
+                    self._escalated_groups.append(tg.value)
+                    try:
+                        for tool in await ext.tools:
+                            name = getattr(tool, 'name', None)
+                            if name:
+                                enabled_names.append(name)
+                    except Exception:
+                        enabled_names.append(tg.value)
+                self._tool_pool.clear()
+
+            # Bump max_iterations to give the agent room to use new tools
+            if self.max_iterations < 15:
+                logger.info(
+                    "Escalation: bumping max_iterations %d → 20",
+                    self.max_iterations,
+                )
+                self.max_iterations = 20
+
+        return enabled_names
 
     # ── Iteration loop override ───────────────────────────────────
 
@@ -678,6 +811,29 @@ class DualModelOrchestrator(AnthropicLLMOrchestrator):
                     self._nudge_skipped = True
                     # Fall through to completion branch (don't continue)
                 else:
+                    # Try dynamic tool escalation before standard nudge
+                    if self._tool_pool:
+                        enabled = await self._select_and_escalate(context)
+                        if enabled:
+                            tools_str = ", ".join(enabled)
+                            logger.info(
+                                "Dual-model: escalated tools [%s] — nudging with new tools",
+                                tools_str,
+                            )
+                            context.memory_manager.add_messages([
+                                CfMessage(
+                                    type=cf.MessageType.HUMAN,
+                                    content=(
+                                        f"You now have additional tools available: "
+                                        f"{tools_str}. Use them to complete the task. "
+                                        f"Don't describe what you'll do — call the "
+                                        f"appropriate tool to execute it now."
+                                    ),
+                                    additional_kwargs={"__synthetic__": True},
+                                )
+                            ])
+                            continue
+
                     logger.info(
                         "Dual-model: no tools called after %d iterations "
                         "— nudging model to use tools",
@@ -727,6 +883,55 @@ class DualModelOrchestrator(AnthropicLLMOrchestrator):
                         continue
                     self._strip_synthetic_messages(context)
                     break
+                elif self._tool_pool:
+                    # Before forcing synthesis, try escalation — the agent
+                    # may need tools it doesn't have yet (e.g., USER route
+                    # agent finished user management but can't write files).
+                    enabled = await self._select_and_escalate(context)
+                    if enabled:
+                        tools_str = ", ".join(enabled)
+                        logger.info(
+                            "Dual-model: escalated tools [%s] — continuing instead of synthesis",
+                            tools_str,
+                        )
+                        context.memory_manager.add_messages([
+                            CfMessage(
+                                type=cf.MessageType.HUMAN,
+                                content=(
+                                    f"You now have additional tools available: "
+                                    f"{tools_str}. Use them to complete the "
+                                    f"remaining parts of the task."
+                                ),
+                                additional_kwargs={"__synthetic__": True},
+                            )
+                        ])
+                        continue
+                    # Functionary said no_additional_tools — proceed with synthesis
+                    logger.info(
+                        "Dual-model: tool selector says no additional tools needed — "
+                        "proceeding with synthesis"
+                    )
+                    self._synthesis_done = True
+                    context.memory_manager.add_messages([
+                        CfMessage(
+                            type=cf.MessageType.HUMAN,
+                            content=(
+                                "Your previous response was an internal draft. Now "
+                                "produce your FINAL response for the user. Rules:\n"
+                                "- **Do NOT call any tools** — write plain text only\n"
+                                "- Give ONE consolidated answer (do NOT repeat code "
+                                "or explanations that already appeared above)\n"
+                                "- If you already showed code, just reference it — "
+                                "don't show it again\n"
+                                "- Keep it concise: what was done, what the result "
+                                "was, and any next steps\n"
+                                "- Do NOT start with 'Summary of Accomplishments' "
+                                "or similar headings"
+                            ),
+                            additional_kwargs={"__synthetic__": True},
+                        )
+                    ])
+                    continue
                 else:
                     logger.info(
                         "Dual-model: tool work complete — forcing consolidated response"

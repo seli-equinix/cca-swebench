@@ -159,12 +159,17 @@ class RouterConfig(BaseModel):
 
 
 class ToolRouterConfig(BaseModel):
-    """In-loop tool selection configuration (Phase 2)."""
+    """In-loop tool selection configuration (Phase 2).
+
+    When enabled, the Functionary model selects which additional tool
+    groups to enable mid-loop when the agent gets stuck without the
+    right tools.
+    """
 
     enabled: bool = False
     url: str = "http://192.168.4.204:8001"
-    confidence_threshold: float = 0.8
-    mechanical_turns_only: bool = True
+    timeout_ms: int = 10000
+    temperature: float = 0.1
 
     class Config:
         extra = "ignore"

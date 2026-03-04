@@ -747,6 +747,8 @@ async def _handle_chat_completions(
                     max_iterations=get_max_iterations(route) if route else 0,
                     nudge_skipped=getattr(entry, "_nudge_skipped", False),
                     circuit_breaker_fired=getattr(entry, "_circuit_breaker_fired", False),
+                    tools_escalated=getattr(entry, "_tools_escalated", False),
+                    escalated_groups=getattr(entry, "_escalated_groups", None) or None,
                 ).model_dump()
 
             return StreamingResponse(
@@ -835,6 +837,8 @@ async def _handle_chat_completions(
                     user_identified=session.identified,
                     user_name=user.display_name if user else None,
                     execution_time_ms=execution_time,
+                    tools_escalated=getattr(entry, "_tools_escalated", False),
+                    escalated_groups=getattr(entry, "_escalated_groups", None) or None,
                 )
 
                 span.set_attribute("cca.status", "success")

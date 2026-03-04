@@ -202,6 +202,12 @@ class ContextMetadata(BaseModel):
     circuit_breaker_fired: bool = Field(
         False, description="Whether error circuit breaker fired"
     )
+    tools_escalated: bool = Field(
+        False, description="Whether dynamic tool escalation was triggered"
+    )
+    escalated_groups: Optional[List[str]] = Field(
+        None, description="Tool groups enabled via dynamic escalation"
+    )
 
 
 class ChatCompletionResponse(BaseModel):
