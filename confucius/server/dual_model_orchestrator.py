@@ -152,10 +152,10 @@ class DualModelOrchestrator(AnthropicLLMOrchestrator):
     _research_brief: str = PrivateAttr(default="")          # 8B's latest research text
     _research_executor_injected: bool = PrivateAttr(default=False)  # executor context sent once
     _search_call_count: int = PrivateAttr(default=0)        # total research tool calls made
-    # Duplication guard: True when the primary (80B) already streamed text
-    # containing code alongside a tool call.  If set, synthesis must be
-    # skipped — otherwise the 80B rewrites its entire response a second time.
-    _primary_streamed_code: bool = PrivateAttr(default=False)
+    # Duplication guard: True when the primary (80B) already streamed ANY text
+    # to the user.  If set, synthesis must be skipped — otherwise the 80B
+    # rewrites its entire response a second time (doubled output bug).
+    _primary_streamed_text: bool = PrivateAttr(default=False)
     # Dynamic tool escalation (Phase 2): pool of disabled extensions that
     # can be selectively enabled mid-loop by the Functionary tool selector.
     _tool_pool: dict = PrivateAttr(default_factory=dict)
@@ -385,12 +385,10 @@ class DualModelOrchestrator(AnthropicLLMOrchestrator):
                 )
             return ""  # Don't stream to user — only 80B speaks
 
-        # Primary (80B) path — track whether it streams code before a tool call.
-        # If it does, synthesis must be skipped to prevent duplicate output.
-        if text.strip() and not self._primary_streamed_code:
-            code_signals = ["```", "def ", "class ", "import ", "return "]
-            if any(s in text for s in code_signals):
-                self._primary_streamed_code = True
+        # Primary (80B) path — track whether it streamed ANY text to the user.
+        # If it did, synthesis must be skipped to prevent duplicate output.
+        if text.strip():
+            self._primary_streamed_text = True
 
         return await super().on_llm_output(text, context)
 
@@ -867,10 +865,10 @@ class DualModelOrchestrator(AnthropicLLMOrchestrator):
                 # synthesis would make it rewrite the exact same response a second
                 # time. Skip synthesis in that case — the streamed response is
                 # already the complete, correct answer.
-                if self._primary_streamed_code:
+                if self._primary_streamed_text:
                     logger.info(
                         "Dual-model: skipping synthesis — primary already "
-                        "streamed a code response (would duplicate output)"
+                        "streamed text to user (would duplicate output)"
                     )
                     # Run the same completion sequence as the normal end branch.
                     # Cannot fall through: we're inside an elif, so the else:break

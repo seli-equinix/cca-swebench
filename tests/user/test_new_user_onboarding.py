@@ -1,13 +1,16 @@
 """Flow test: A brand-new person arrives at CCA for the first time.
 
 Journey: introduce with name + company + skills → verify profile created
-via REST → same-session context persistence → preference setting.
+via REST → same-session context persistence → preference setting →
+new session verifies notes + preference recall.
 
 Replaces 8 individual tests: identify_new_user, identify_with_greeting,
 remember_single_fact, remember_multiple_facts, context_identified_user,
 set_preference, preference_acknowledged, identify_updates_metadata.
 """
 
+import re
+import time
 import uuid
 
 import pytest
@@ -97,6 +100,51 @@ class TestNewUserOnboarding:
             trace_test.set_attribute("cca.test.s3_response", r3.content[:300])
             assert r3.content, "Turn 3 returned empty"
             assert len(r3.content) > 50, "Response too short for a code task"
+
+            # ── Notes check: NoteObserver should have extracted the preference ──
+            # NoteObserver is async fire-and-forget — give it time to process
+            time.sleep(10)
+            notes = cca.search_notes("type hints concise code", user_id=user_id)
+            trace_test.set_attribute("cca.test.notes_count", len(notes))
+            trace_test.set_attribute(
+                "cca.test.notes_preview",
+                str(notes[:2])[:500] if notes else "no notes found",
+            )
+            # Note should exist about the preference
+            assert len(notes) > 0, (
+                "No notes found about 'type hints' preference — "
+                "NoteObserver may not be extracting preferences"
+            )
+
+            # ── Turn 4: New session — verify preference was remembered ──
+            sid2 = f"test-onb-{uuid.uuid4().hex[:8]}"
+            msg4 = (
+                f"Hey it's {name} again. Write me a function that "
+                f"reverses a linked list."
+            )
+            r4 = cca.chat(msg4, session_id=sid2)
+            evaluate_response(r4, msg4, trace_test, judge_model, "user")
+
+            trace_test.set_attribute("cca.test.s4_response", r4.content[:500])
+            assert r4.content, "Turn 4 returned empty"
+            assert r4.user_identified, "Returning user should be identified"
+
+            # Code should have ACTUAL type annotations in function signatures,
+            # not just type names in docstrings or comments.
+            # Look for `def func(param: Type)` or `-> ReturnType` patterns.
+            content = r4.content
+            has_signature_hints = bool(re.search(
+                r'def \w+\(.*?:\s*\w+', content, re.DOTALL
+            ))
+            has_return_hint = "->" in content
+            has_type_hints = has_signature_hints or has_return_hint
+            trace_test.set_attribute("cca.test.s4_has_signature_hints", has_signature_hints)
+            trace_test.set_attribute("cca.test.s4_has_return_hint", has_return_hint)
+            assert has_type_hints, (
+                "Turn 4 code doesn't have type hints in function signatures — "
+                "preference not applied. "
+                f"Response: {content[:400]}"
+            )
 
         finally:
             cca.cleanup_test_user(name)

@@ -466,6 +466,22 @@ class CCAClient:
         except Exception:
             pass  # Best-effort cleanup
 
+    def search_notes(self, query: str, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """GET /v1/notes/search — semantic search over extracted notes. No tracing."""
+        params: Dict[str, Any] = {"q": query}
+        if user_id:
+            params["user_id"] = user_id
+        try:
+            resp = self._client.get(
+                f"{self.base_url}/v1/notes/search",
+                params=params,
+                timeout=TIMEOUT_DIAGNOSTIC,
+            )
+            data = resp.json()
+            return data.get("notes", [])
+        except Exception:
+            return []
+
     def list_workspace_files(self) -> Dict[str, Any]:
         """GET /workspace/files — list files in /workspace. No tracing."""
         resp = self._client.get(
