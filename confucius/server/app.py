@@ -920,6 +920,15 @@ async def list_users() -> Dict[str, Any]:
     }
 
 
+@app.get("/user/{user_id}")
+async def get_user(user_id: str) -> Dict[str, Any]:
+    """Get full user profile by user_id (facts, skills, aliases, etc.)."""
+    profile = await user_session_mgr._get_user_profile(user_id)
+    if profile is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    return profile.to_dict()
+
+
 @app.delete("/users/{user_id}", dependencies=[Depends(require_admin_key)])
 async def delete_user(user_id: str) -> Dict[str, Any]:
     """Delete a user profile by user_id (for testing/admin)."""

@@ -424,6 +424,18 @@ class CCAClient:
 
     # ==================== Helpers ====================
 
+    def get_user_profile(self, user_id: str) -> Optional[Dict[str, Any]]:
+        """GET /user/{user_id} — full profile with facts, skills, aliases. No tracing."""
+        try:
+            resp = self._client.get(
+                f"{self.base_url}/user/{user_id}", timeout=TIMEOUT_DIAGNOSTIC
+            )
+            if resp.status_code == 200:
+                return resp.json()
+        except Exception:
+            pass
+        return None
+
     def find_user_by_name(self, name: str) -> Optional[Dict[str, Any]]:
         """Search /users for a user by display name (case-insensitive). No tracing."""
         data = self.list_users()
