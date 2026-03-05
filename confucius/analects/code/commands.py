@@ -105,7 +105,6 @@ def get_allowed_commands() -> Dict[str, str]:
         "source": "Execute commands from a file in the current shell",
         # ── Process & job control ──
         "sleep": "Delay for a specified amount of time",
-        "time": "Time a command execution",
         "timeout": "Run a command with a time limit",
         "wait": "Wait for background processes to finish",
         "nohup": "Run a command immune to hangups",
