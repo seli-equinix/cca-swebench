@@ -192,7 +192,10 @@ ROUTING_TOOLS: List[Dict[str, Any]] = [
             "description": (
                 "Route to the coding expert. Use for: writing code, editing files, "
                 "refactoring, debugging, implementing features, fixing bugs, "
-                "creating files, modifying code, and Git operations."
+                "creating files, modifying code, and Git operations. "
+                "This route also handles user facts — if the user introduces "
+                "themselves or asks about their profile while requesting code, "
+                "use this route."
             ),
             "parameters": {
                 "type": "object",
@@ -314,13 +317,15 @@ ROUTING_TOOLS: List[Dict[str, Any]] = [
         "function": {
             "name": "route_to_user",
             "description": (
-                "Route to user management. Use for: user identification "
-                "('I'm Sean', 'my name is...'), viewing/updating/deleting "
-                "user profiles, storing personal facts ('remember I work at...'), "
-                "updating preferences, managing skills and aliases. "
-                "Use when the user's PRIMARY intent is about their identity "
-                "or profile — NOT when they introduce themselves while "
-                "asking a coding/infra question."
+                "Route to user management. Use ONLY when the request is "
+                "exclusively about user identity or profile management: "
+                "identification ('I'm Sean'), viewing/deleting profiles, "
+                "storing facts ('remember I work at...'), updating "
+                "preferences, managing skills and aliases. "
+                "If the user ALSO asks for code, infrastructure help, "
+                "or any technical task alongside user management, route "
+                "to coder or infrastructure instead — those routes have "
+                "built-in user memory tools."
             ),
             "parameters": {
                 "type": "object",
@@ -755,9 +760,10 @@ AI news?" ALWAYS need web search because your training data may be outdated.
 Disambiguation:
 - Coder vs infrastructure: Docker/containers/services/nodes → infrastructure; \
 files/functions/classes/tests/bugs → coder.
-- User vs coder: If user introduces themselves AND asks a coding question in the \
-same message, the coding task is primary → coder. If the message is ONLY about \
-their identity, profile, or stored data → user.
+- User vs coder: If user asks about their profile or facts AND also requests \
+code/technical work in the same message → coder (it has user memory tools). \
+Route to user ONLY when the message is exclusively about identity, profile, \
+or stored data with no other task.
 - "Delete my profile", "what do you know about me?", "remember I work at X" → user.
 - "Hi I'm Sean, write me a Python script" → coder (coding is primary).
 
