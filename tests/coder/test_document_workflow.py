@@ -52,8 +52,8 @@ class TestDocumentWorkflow:
 
         # ── Turn 2: Search for the document content ──
         msg2 = (
-            f"Search my documents for the anomaly detection approach "
-            f"in Project Zephyr. What model does it use?"
+            "Search my documents for the anomaly detection approach "
+            "in Project Zephyr. What model does it use?"
         )
         r2 = cca.chat(msg2, session_id=sid)
         evaluate_response(r2, msg2, trace_test, judge_model, "integration")
@@ -76,9 +76,13 @@ class TestDocumentWorkflow:
         sid = f"test-docpromo-{uuid.uuid4().hex[:8]}"
         unique_id = uuid.uuid4().hex[:8]
 
-        # ── Turn 1: Upload a document ──
+        # ── Turn 1: Upload a document (framed as coding context) ──
+        # Must avoid user-management framing ("store this") which routes
+        # to USER. Frame as workspace document for coding reference.
         msg1 = (
-            f"Store this as a document called 'deploy-runbook-{unique_id}':\n\n"
+            f"I need to write deployment scripts. Upload this deployment "
+            f"runbook as a session document so I can reference it while "
+            f"coding:\n\n"
             f"Deployment Runbook ({unique_id}):\n"
             f"1. Run pre-flight checks\n"
             f"2. Tag release in git\n"
@@ -91,10 +95,22 @@ class TestDocumentWorkflow:
         evaluate_response(r1, msg1, trace_test, judge_model, "integration")
 
         trace_test.set_attribute("cca.test.t1_response", r1.content[:300])
+        route = r1.metadata.get("route", "")
+        trace_test.set_attribute("cca.test.t1_route", route)
         assert r1.content, "Turn 1 returned empty"
 
+        iters = r1.metadata.get("tool_iterations", 0)
+        trace_test.set_attribute("cca.test.t1_iters", iters)
+        assert iters >= 1, (
+            f"Agent didn't use document tools (route={route}, iters={iters}). "
+            f"Response: {r1.content[:200]}"
+        )
+
         # ── Turn 2: List session documents ──
-        msg2 = "What documents do I have stored in this session?"
+        msg2 = (
+            "List the documents in this session. Is the deployment "
+            "runbook still available?"
+        )
         r2 = cca.chat(msg2, session_id=sid)
         evaluate_response(r2, msg2, trace_test, judge_model, "integration")
 
