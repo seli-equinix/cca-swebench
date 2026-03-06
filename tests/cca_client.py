@@ -157,7 +157,7 @@ class CCAClient:
 
         with self.tracer.start_as_current_span("cca.chat") as span:
             span.set_attribute("openinference.span.kind", "CHAIN")
-            span.set_attribute("input.value", message[:500])
+            span.set_attribute("input.value", message)
             span.set_attribute("cca.session_id", session_id)
             span.set_attribute("cca.message", message[:200])
             span.set_attribute("cca.idle_timeout", read_timeout)
@@ -202,7 +202,7 @@ class CCAClient:
                     span.set_attribute("cca.duration_ms", elapsed_ms)
                     span.set_attribute("cca.response_length", len(result.content))
                     span.set_attribute("cca.response_preview", result.content[:500])
-                    span.set_attribute("output.value", result.content[:500])
+                    span.set_attribute("output.value", result.content)
                     span.set_attribute("cca.finish_reason", result.finish_reason)
                     if result.metadata:
                         span.set_attribute(

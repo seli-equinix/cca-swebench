@@ -123,6 +123,8 @@ def trace_test(request, phoenix_tracer):
         category = "websearch"
     elif "/integration/" in test_path:
         category = "integration"
+    elif "/coder/" in test_path:
+        category = "coder"
     else:
         category = "other"
 
