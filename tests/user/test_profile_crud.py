@@ -64,11 +64,11 @@ class TestProfileCRUD:
             trace_test.set_attribute("cca.test.has_alias", has_alias)
             assert has_alias, f"Alias '{alias}' not stored: {aliases_lower}"
 
-            # ── Session 2: View profile — should show stored data ──
+            # ── Session 2: View profile — system tracks without re-intro ──
             msg2 = (
-                f"Hey {name}. What do you know about me? "
-                f"Show my full profile. Also write a one-liner to "
-                f"generate a random number."
+                "What do you know about me? "
+                "Show my full profile. Also write a one-liner to "
+                "generate a random number."
             )
             r2 = cca.chat(msg2, session_id=sid2)
             evaluate_response(r2, msg2, trace_test, judge_model, "user")
@@ -87,9 +87,9 @@ class TestProfileCRUD:
                 f"{r2.content[:300]}"
             )
 
-            # ── Session 3: Remove Java skill and alias ──
+            # ── Session 3: Remove Java skill and alias (no re-intro) ──
             msg3 = (
-                f"Hey {name}. I don't use Java anymore — remove it from "
+                f"I don't use Java anymore — remove it from "
                 f"my skills. Also remove the alias {alias}, I don't go "
                 f"by that. Write a one-liner to get the current time."
             )
@@ -115,11 +115,11 @@ class TestProfileCRUD:
                 f"Alias '{alias}' still present: {aliases_after}"
             )
 
-            # ── Session 4: Delete profile entirely ──
+            # ── Session 4: Delete profile entirely (no re-intro) ──
             msg4 = (
-                f"Hi I'm {name}. Please delete my profile completely. "
-                f"I confirm permanent deletion. Also show me how to "
-                f"delete a file in Python."
+                "Please delete my profile completely. "
+                "I confirm permanent deletion. Also show me how to "
+                "delete a file in Python."
             )
             r4 = cca.chat(msg4, session_id=sid4)
             evaluate_response(r4, msg4, trace_test, judge_model, "user")

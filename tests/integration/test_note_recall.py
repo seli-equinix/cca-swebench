@@ -49,10 +49,10 @@ class TestNoteRecall:
             # to call Qwen3-8B for extraction + embed + upsert to Qdrant.
             time.sleep(15)
 
-            # ── Session 2: New session — ask about previous work ──
+            # ── Session 2: New session — recall without re-intro ──
             msg2 = (
-                f"Hey it's {name}. What was that project I was working on "
-                f"last time? Something about real-time streaming?"
+                "What was that project I was working on "
+                "last time? Something about real-time streaming?"
             )
             r2 = cca.chat(msg2, session_id=sid2)
             # Skip judge — recall quality depends on note extraction

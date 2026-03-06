@@ -48,11 +48,10 @@ class TestReturningUserMemory:
             user = cca.find_user_by_name(name)
             assert user is not None, f"User '{name}' not created"
 
-            # ── Session 2: Return — verify recall + context enrichment ──
+            # ── Session 2: Return — system should track without re-intro ──
             msg2 = (
-                f"Hey it's {name} again, the Rust person from {old_company}. "
-                f"Can you remind me what company I work at? Also write me "
-                f"a health check function in Python."
+                "Can you remind me what company I work at? Also write me "
+                "a health check function in Python."
             )
             r2 = cca.chat(msg2, session_id=sid2)
             evaluate_response(r2, msg2, trace_test, judge_model, "user")
@@ -84,9 +83,9 @@ class TestReturningUserMemory:
                 f"Expected session_count >= 2, got {matches[0]['session_count']}"
             )
 
-            # ── Session 3: Job change — fact overwrite ──
+            # ── Session 3: Job change — fact overwrite (no re-intro) ──
             msg3 = (
-                f"Hey {name} here. I switched jobs — I now work at "
+                f"I switched jobs — I now work at "
                 f"{new_company}. Write me a one-liner to check disk usage."
             )
             r3 = cca.chat(msg3, session_id=sid3)
@@ -95,10 +94,10 @@ class TestReturningUserMemory:
             trace_test.set_attribute("cca.test.s3_response", r3.content[:300])
             assert r3.content, "Session 3 returned empty"
 
-            # ── Session 4: Verify overwrite persisted ──
+            # ── Session 4: Verify overwrite persisted (no re-intro) ──
             msg4 = (
-                f"Hi {name} again. Where do I work now? "
-                f"Also write a quick Python timestamp function."
+                "Where do I work now? "
+                "Also write a quick Python timestamp function."
             )
             r4 = cca.chat(msg4, session_id=sid4)
             evaluate_response(r4, msg4, trace_test, judge_model, "user")

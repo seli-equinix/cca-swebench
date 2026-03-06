@@ -116,11 +116,10 @@ class TestNewUserOnboarding:
                 "NoteObserver may not be extracting preferences"
             )
 
-            # ── Turn 4: New session — verify preference was remembered ──
+            # ── Turn 4: New session — verify preference recalled (no re-intro) ──
             sid2 = f"test-onb-{uuid.uuid4().hex[:8]}"
             msg4 = (
-                f"Hey it's {name} again. Write me a function that "
-                f"reverses a linked list."
+                "Write me a function that reverses a linked list."
             )
             r4 = cca.chat(msg4, session_id=sid2)
             evaluate_response(r4, msg4, trace_test, judge_model, "user")

@@ -53,11 +53,10 @@ class TestFullUserLifecycle:
             user_id = user["user_id"]
             trace_test.set_attribute("cca.test.user_id", user_id)
 
-            # ── Session 2: Returns, past context should enrich response ──
+            # ── Session 2: Returns — system should track them without re-intro ──
             msg2 = (
-                f"Hey it's {name} again from {company}. "
-                f"I need help with a container health check script — "
-                f"write a bash one-liner that checks if a Docker container is running."
+                "I need help with a container health check script — "
+                "write a bash one-liner that checks if a Docker container is running."
             )
             r2 = cca.chat(msg2, session_id=sid2)
             evaluate_response(r2, msg2, trace_test, judge_model, "integration")
@@ -73,10 +72,10 @@ class TestFullUserLifecycle:
                 f"{r2.content[:200]}"
             )
 
-            # ── Session 3: Different route — web search ──
+            # ── Session 3: Different route — web search (no re-intro) ──
             msg3 = (
-                f"Hi, I'm {name}. Can you look up the latest Docker Compose "
-                f"release notes and tell me what's new? Give me a link."
+                "Can you look up the latest Docker Compose "
+                "release notes and tell me what's new? Give me a link."
             )
             r3 = cca.chat(msg3, session_id=sid3)
             # Skip LLM judge for session 3 — this tests route diversity in
