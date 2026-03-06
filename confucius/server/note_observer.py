@@ -532,6 +532,15 @@ class NoteObserver:
         if not notes:
             return
 
+        # Skip storage if user was deleted while we were extracting/embedding
+        if user_id:
+            if not await self._user_exists(user_id):
+                logger.info(
+                    "Skipping note storage: user %s deleted (session %s)",
+                    user_id, session_id,
+                )
+                return
+
         # Generate embeddings for all note contents
         contents = [n["content"] for n in notes]
         embeddings = await self._embed(contents)
@@ -591,6 +600,35 @@ class NoteObserver:
         except Exception as e:
             logger.warning("Embedding call failed: %s", e)
             return []
+
+    async def _user_exists(self, user_id: str) -> bool:
+        """Check if a user profile still exists in Qdrant.
+
+        Used to prevent storing notes for a deleted user — the NoteObserver
+        runs as a fire-and-forget task and may finish after the user's
+        profile has been cascade-deleted.
+        """
+        if self._qdrant is None:
+            return True  # Can't check — assume exists
+        try:
+            from qdrant_client.http import models
+
+            results, _ = await self._qdrant.scroll(
+                collection_name="user_profiles",
+                scroll_filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="user_id",
+                            match=models.MatchValue(value=user_id),
+                        )
+                    ]
+                ),
+                limit=1,
+                with_payload=False,
+            )
+            return len(results) > 0
+        except Exception:
+            return True  # On error, assume exists (don't lose notes)
 
     # ------------------------------------------------------------------
     # Search (used by context enrichment and API endpoints)

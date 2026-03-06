@@ -282,11 +282,6 @@ class TestProfileCRUD:
             # Session 5: Delete profile — verify cascade cleanup
             # ═══════════════════════════════════════════════════════
 
-            # Wait for NoteObserver to finish processing session 4
-            # notes before deletion — otherwise async notes land in
-            # cca_notes AFTER the cascade delete runs.
-            time.sleep(10)
-
             # Snapshot notes count before deletion
             notes_before_del = cca.search_notes(name, user_id=user_id)
             notes_count_before = len(notes_before_del)
