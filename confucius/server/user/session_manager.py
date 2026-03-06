@@ -717,6 +717,18 @@ class UserSessionManager:
                     "User profiles collection exists in Qdrant"
                 )
 
+            # Ensure payload index on user_id for filtered lookups.
+            # Without this, concurrent upserts create many segments and
+            # filtered scroll can miss points during segment merging.
+            try:
+                await self._qdrant.create_payload_index(
+                    collection_name=PROFILES_COLLECTION,
+                    field_name="user_id",
+                    field_schema="keyword",
+                )
+            except Exception:
+                pass  # Index already exists
+
             # Initialise embedding function
             self._embedding_func = _ProfileEmbeddingFunc(self._embedding_url)
             logger.info(

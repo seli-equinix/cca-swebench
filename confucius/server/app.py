@@ -968,6 +968,16 @@ async def get_user(user_id: str) -> Dict[str, Any]:
     """Get full user profile by user_id (facts, skills, aliases, etc.)."""
     profile = await user_session_mgr._get_user_profile(user_id)
     if profile is None:
+        # Debug: check if user exists via full scan (get_all_users path)
+        all_users = await user_session_mgr.get_all_users()
+        found_in_all = [u for u in all_users if u.user_id == user_id]
+        if found_in_all:
+            logger.error(
+                "BUG: user_id=%s found via get_all_users (%s) but NOT "
+                "via _get_user_profile. Returning found profile.",
+                user_id, found_in_all[0].display_name,
+            )
+            return found_in_all[0].to_dict()
         raise HTTPException(status_code=404, detail="User not found")
     return profile.to_dict()
 

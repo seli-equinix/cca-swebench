@@ -12,9 +12,12 @@ traces clean. Each test trace should show: test span → cca.chat → server spa
 from __future__ import annotations
 
 import json
+import logging
 import time
 import uuid
 from typing import Any, Dict, List, Optional
+
+log = logging.getLogger(__name__)
 
 import httpx
 from opentelemetry import trace
@@ -443,8 +446,15 @@ class CCAClient:
             )
             if resp.status_code == 200:
                 return resp.json()
-        except Exception:
-            pass
+            log.warning(
+                "get_user_profile(%s) status=%d body=%s",
+                user_id, resp.status_code, resp.text[:300],
+            )
+        except Exception as e:
+            log.warning(
+                "get_user_profile(%s) exception: %s: %s",
+                user_id, type(e).__name__, e,
+            )
         return None
 
     def find_user_by_name(self, name: str) -> Optional[Dict[str, Any]]:
