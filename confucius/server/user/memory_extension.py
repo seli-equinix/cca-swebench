@@ -87,14 +87,15 @@ class UserMemoryExtension(ToolUseExtension):
                 description=(
                     "Save an important fact about the current user. "
                     "Facts persist across sessions and are included in future context.\n\n"
-                    "Standard keys: employer, main_project, team, role, etc.\n\n"
+                    "Standard keys: employer, main_project, team, role, "
+                    "infrastructure, registry, deployment, tool, preference\n\n"
                     "Special keys for structured profile data:\n"
                     "- key='skill', value='Python' → adds skill to profile skills list\n"
                     "- key='alias', value='seli' → adds alias/nickname to profile\n"
                     "- key='remove_skill', value='Java' → removes skill from profile\n"
                     "- key='remove_alias', value='old_name' → removes alias from profile\n\n"
                     "Call immediately when the user mentions personal details, "
-                    "skills, or nicknames during work."
+                    "infrastructure setup, tools, or anything they want remembered."
                 ),
                 input_schema={
                     "type": "object",

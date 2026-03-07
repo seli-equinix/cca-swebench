@@ -76,6 +76,9 @@ def build_user_context(
 TOOL USAGE — Call these tools when appropriate:
 - **remember_user_fact**: When user shares important info. Call IMMEDIATELY — don't wait.
   - General facts: key="employer", value="Acme Corp"
+  - Infrastructure: key="infrastructure", value="5-node Docker Swarm cluster"
+  - Deployment: key="deployment", value="Portainer with GitOps"
+  - Registry: key="registry", value="registry.acme.internal"
   - Skills: key="skill", value="Python" (adds to structured skills list)
   - Aliases: key="alias", value="seli" (adds to structured aliases list)
   - Remove skill: key="remove_skill", value="Java"

@@ -35,6 +35,7 @@ from ..core.tracing import (
     LLM_TOKEN_COUNT_PROMPT,
     LLM_TOKEN_COUNT_COMPLETION,
 )
+from .user.session_manager import Session
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +75,86 @@ Rules:
 - If the user revealed personal/project info, create a "fact" type note
 
 Return valid JSON only, no markdown fences."""
+
+# ---------------------------------------------------------------------------
+# Route-aware fact extraction prompts (Layer 2)
+# ---------------------------------------------------------------------------
+# Each route gets a prompt tuned to what facts matter most for that context.
+# Qwen3-8B runs with temp=0 for near-deterministic extraction.
+
+_ROUTE_FACT_PROMPTS: Dict[str, str] = {
+    "infrastructure": """\
+You are an infrastructure profile extractor. From the USER's message,
+extract infrastructure and DevOps facts they shared.
+
+Priority facts for infrastructure context:
+- "infrastructure" — clusters, servers, nodes, architecture (e.g. "5-node Docker Swarm")
+- "registry" — container/package registries with URLs (e.g. "registry.acme.internal")
+- "deployment" — deployment tools and processes (e.g. "Portainer with GitOps")
+- "tool" — infrastructure tools (e.g. "Terraform", "Ansible")
+- "network" — network details, IPs, domains
+
+Also extract if mentioned: employer, role, team, project, preference
+
+Return ONLY a JSON array of {"key": "...", "value": "..."} objects.
+Return [] if no facts found. No markdown fences.""",
+
+    "coder": """\
+You are a developer profile extractor. From the USER's message,
+extract development and project facts they shared.
+
+Priority facts for coding context:
+- "project" — project names, repos, what they're building
+- "tool" — languages, frameworks, libraries they use
+- "preference" — coding style, verbosity, patterns they prefer
+- "team" — team name, department
+
+Also extract if mentioned: employer, role, infrastructure, registry, deployment
+
+Return ONLY a JSON array of {"key": "...", "value": "..."} objects.
+Return [] if no facts found. No markdown fences.""",
+
+    "search": """\
+You are a research profile extractor. From the USER's message,
+extract facts about their work context and interests.
+
+Priority facts for search context:
+- "project" — what they're researching or working on
+- "tool" — technologies they use or are evaluating
+- "domain" — their domain expertise or focus area
+
+Also extract if mentioned: employer, role, team, infrastructure
+
+Return ONLY a JSON array of {"key": "...", "value": "..."} objects.
+Return [] if no facts found. No markdown fences.""",
+
+    "user": """\
+You are a personal profile extractor. From the USER's message,
+extract personal and professional facts they shared.
+
+Priority facts for user context:
+- "employer" — company or organization
+- "role" — job title or position
+- "team" — team name or department
+- "skill" — skills they mention having (extract each separately)
+- "alias" — nicknames or alternative names
+- "preference" — how they like things done
+
+Also extract if mentioned: infrastructure, project, tool, deployment
+
+Return ONLY a JSON array of {"key": "...", "value": "..."} objects.
+Return [] if no facts found. No markdown fences.""",
+}
+
+_DEFAULT_FACT_PROMPT: str = """\
+You are a user profile extractor. From the USER's message,
+extract any personal or work facts they shared.
+
+Valid keys: employer, role, team, infrastructure, registry,
+deployment, tool, project, preference
+
+Return ONLY a JSON array of {"key": "...", "value": "..."} objects.
+Return [] if no facts found. No markdown fences."""
 
 
 def _stable_note_id(content: str, session_id: str) -> str:
@@ -629,6 +710,102 @@ class NoteObserver:
             return len(results) > 0
         except Exception:
             return True  # On error, assume exists (don't lose notes)
+
+    # ------------------------------------------------------------------
+    # Route-aware user fact extraction (Layer 2)
+    # ------------------------------------------------------------------
+
+    async def extract_user_facts(
+        self,
+        user_message: str,
+        user_id: str,
+        session_id: str,
+        session_mgr: Any,
+        route: str = "coder",
+    ) -> None:
+        """Extract structured facts from user message via Qwen3-8B.
+
+        Route-aware: uses different extraction prompts based on the
+        LLM's current role (coder, infrastructure, search, user).
+        Runs as async background task with temp=0 for determinism.
+        """
+        if not self._openai_client or not user_id:
+            return
+
+        try:
+            prompt = _ROUTE_FACT_PROMPTS.get(route, _DEFAULT_FACT_PROMPT)
+
+            response = await self._openai_client.chat.completions.create(
+                model=self._llm_model,
+                messages=[
+                    {"role": "system", "content": prompt},
+                    {"role": "user", "content": user_message},
+                ],
+                temperature=0.0,
+                max_tokens=512,
+            )
+
+            content = self._strip_thinking(
+                response.choices[0].message.content or "",
+            )
+            facts = self._parse_facts_json(content)
+            if not facts:
+                return
+
+            # Guard: skip if user was deleted while extracting
+            if not await self._user_exists(user_id):
+                logger.info(
+                    "Skipping fact storage: user %s deleted", user_id,
+                )
+                return
+
+            for fact in facts:
+                temp_session = Session(
+                    session_id=session_id,
+                    user_id=user_id,
+                    identified=True,
+                )
+                await session_mgr.remember_user_fact(
+                    temp_session, fact["key"], fact["value"],
+                )
+
+            logger.info(
+                "FactExtractor[%s]: stored %d facts for user %s: %s",
+                route,
+                len(facts),
+                user_id,
+                [(f["key"], f["value"]) for f in facts],
+            )
+
+        except Exception as e:
+            logger.warning(
+                "Fact extraction failed (route=%s, session=%s): %s",
+                route,
+                session_id,
+                e,
+            )
+
+    @staticmethod
+    def _parse_facts_json(content: str) -> List[Dict[str, str]]:
+        """Parse [{key, value}] JSON from LLM output."""
+        content = content.strip()
+        if content.startswith("```"):
+            lines = content.split("\n")
+            lines = [l for l in lines if not l.strip().startswith("```")]
+            content = "\n".join(lines).strip()
+        if not content:
+            return []
+        try:
+            parsed = json.loads(content)
+            if isinstance(parsed, list):
+                return [
+                    {"key": str(f["key"]), "value": str(f["value"])}
+                    for f in parsed
+                    if isinstance(f, dict) and "key" in f and "value" in f
+                ]
+        except json.JSONDecodeError:
+            pass
+        return []
 
     # ------------------------------------------------------------------
     # Search (used by context enrichment and API endpoints)

@@ -469,6 +469,11 @@ async def _handle_chat_completions(
     if session.identified:
         user = await user_session_mgr.get_user_for_session(session)
         id_source = "session"
+        # Router may have extracted facts — store them for returning users too
+        if route and route.detected_user_facts and user:
+            await user_session_mgr._store_facts_from_extraction(
+                user, route.detected_user_facts,
+            )
     elif user_message:
         # Try router-extracted name first (Functionary already parsed it)
         if route and route.detected_user_name:
@@ -760,6 +765,13 @@ async def _handle_chat_completions(
                                     ctx, note_observer, list(trajectory),
                                     session_id, user,
                                 ))
+                                # Fire route-aware fact extraction for identified users
+                                if user and session.identified:
+                                    route_name = route.expert.value if route else "coder"
+                                    asyncio.create_task(note_observer.extract_user_facts(
+                                        user_message, user.user_id, session_id,
+                                        user_session_mgr, route=route_name,
+                                    ))
                         except Exception as e:
                             span.set_attribute("cca.status", "error")
                             span.set_attribute("cca.error", str(e)[:500])
@@ -848,6 +860,13 @@ async def _handle_chat_completions(
                             ctx, note_observer, list(trajectory),
                             session_id, user,
                         ))
+                        # Fire route-aware fact extraction for identified users
+                        if user and session.identified:
+                            route_name = route.expert.value if route else "coder"
+                            asyncio.create_task(note_observer.extract_user_facts(
+                                user_message, user.user_id, session_id,
+                                user_session_mgr, route=route_name,
+                            ))
 
                     # Collect response from IO buffer
                     response_text = io.get_response_text()

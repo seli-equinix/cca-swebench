@@ -89,7 +89,9 @@ class UserToolsExtension(ToolUseExtension):
                 description=(
                     "Save an important fact about the current user. "
                     "Facts persist across sessions and are included in future context. "
-                    "Use for things like: employer, main project, server names, etc."
+                    "Use for things like: employer, main project, server names, "
+                    "infrastructure details (clusters, registries, deployment tools), "
+                    "team info, or any detail the user asks you to remember."
                 ),
                 input_schema={
                     "type": "object",
