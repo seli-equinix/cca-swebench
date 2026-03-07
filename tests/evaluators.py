@@ -611,6 +611,10 @@ def run_deferred_experiment(run_judge: bool = False) -> list[dict]:
                 {"message": item["message"], "category": item["category"]}
                 for item in _EVAL_QUEUE
             ],
+            outputs=[
+                {"response": item["response"][:4000]}
+                for item in _EVAL_QUEUE
+            ],
             metadata=[
                 {
                     "test_name": item["test_name"],
