@@ -355,3 +355,85 @@ def session_cleanup(cca):
             log.warning("LEAKED test users (not cleaned by tests): %s", stale)
     except Exception as e:
         log.warning("Session cleanup: failed to check users: %s", e)
+
+
+# ==================== Deferred Experiment + LLM Judge ====================
+
+
+@pytest.fixture(scope="session", autouse=True)
+def deferred_experiment(judge_model, request):
+    """Create Phoenix Dataset + Experiment after all tests.
+
+    ALWAYS creates dataset/experiment (code eval scores for all 53 calls).
+    If --with-judge: also runs deferred LLM judge on eligible items.
+    """
+    yield  # All tests run here
+
+    from .evaluators import _EVAL_QUEUE, run_deferred_experiment
+
+    if not _EVAL_QUEUE:
+        return
+
+    run_judge = judge_model is not None
+    label = "LLM Judge + " if run_judge else ""
+    print(f"\n{'=' * 60}")
+    print(f"{label}Phoenix Experiment ({len(_EVAL_QUEUE)} responses)")
+    print(f"{'=' * 60}")
+
+    results = run_deferred_experiment(run_judge=run_judge)
+    request.config._judge_results = results
+
+    failures = [r for r in results if r["label"] in ("poor", "failed")]
+    request.config._judge_failures = failures
+
+    if run_judge and results:
+        passed = len(results) - len(failures)
+        print(f"Judge: {passed} passed, {len(failures)} failed")
+    print(f"{'=' * 60}")
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """Fail session if any LLM judge evaluations returned poor/failed."""
+    failures = getattr(session.config, "_judge_failures", [])
+    if failures and exitstatus == 0:
+        session.exitstatus = 1
+
+
+def pytest_terminal_summary(terminalreporter, exitstatus, config):
+    """Print LLM judge report with per-test/per-turn grouping."""
+    results = getattr(config, "_judge_results", [])
+    if not results:
+        return
+
+    failures = getattr(config, "_judge_failures", [])
+    terminalreporter.write_sep("=", "LLM Judge Report")
+
+    current_test = None
+    for r in results:
+        if r["test_name"] != current_test:
+            current_test = r["test_name"]
+            terminalreporter.write_line(f"\n  {current_test}:")
+
+        is_fail = r["label"] in ("poor", "failed")
+        marker = "FAIL" if is_fail else "PASS"
+        turn = r.get("turn", "?")
+        terminalreporter.write_line(
+            f"    {marker}  [turn {turn}] {r['name']} = {r['label']}"
+        )
+
+    passed = len(results) - len(failures)
+    terminalreporter.write_line(
+        f"\n  {passed} passed, {len(failures)} failed "
+        f"({len(results)} total)"
+    )
+
+    if failures:
+        terminalreporter.write_sep("-", "Judge Failures")
+        for f in failures:
+            terminalreporter.write_line(
+                f"  {f['test_name']} [turn {f.get('turn', '?')}] "
+                f":: {f['name']}: {f['label']}"
+            )
+            terminalreporter.write_line(
+                f"    {f.get('explanation', '')[:200]}"
+            )

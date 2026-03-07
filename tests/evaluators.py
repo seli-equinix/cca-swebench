@@ -1,18 +1,18 @@
 """Phoenix evaluators for the CCA test suite.
 
 Two types of evaluators:
-  1. Code evaluators (instant, deterministic) — always run
-  2. LLM judge evaluators (via direct vLLM call) — run when judge_model available
+  1. Code evaluators (instant, deterministic) — always run inline during tests
+  2. LLM judge evaluators (via direct vLLM call) — deferred to after all tests
 
-The LLM judge talks DIRECTLY to vLLM on Spark2:8000/v1 (raw OpenAI-compatible
-API). It does NOT go through CCA. CCA is the system under test; the judge is
-an independent assessor.
-
-Results are posted to Phoenix as **span annotations** (not just span attributes)
-so they appear in the Annotations tab of the Phoenix UI.
+Every evaluate_response() call is queued for a Phoenix Dataset + Experiment.
+After all tests complete, the deferred runner:
+  - Creates a Phoenix Dataset (input/output/metadata for each call)
+  - Creates a Phoenix Experiment with code eval scores (always)
+  - Runs LLM judge evaluators if --with-judge was used (deferred, no vLLM contention)
+  - Posts LLM annotations to spans (Traces tab)
 
 Usage in tests:
-    evals = evaluate_response(result, message, trace_test, judge_model, "user")
+    evaluate_response(result, message, trace_test, judge_model, "user")
 """
 
 from __future__ import annotations
@@ -29,6 +29,13 @@ log = logging.getLogger(__name__)
 SCORE_PASS = 1.0
 SCORE_PARTIAL = 0.5
 SCORE_FAIL = 0.0
+
+# Evaluation queue — ALL evaluate_response() calls append here.
+# Drained after all tests to create Phoenix Dataset + Experiment.
+_EVAL_QUEUE: list[dict] = []
+_TURN_COUNTERS: dict[str, int] = {}
+
+PHOENIX_URL = "http://192.168.4.204:6006"
 
 # Lazy singleton for Phoenix client
 _phoenix_client = None
@@ -480,12 +487,6 @@ def evaluate_response(
         if ev is not None:
             evals[ev["name"]] = ev
 
-    # --- LLM judge evaluators (only if judge available) ---
-    if judge_model is not None and result.content:
-        for llm_eval in [eval_response_quality, eval_task_completion]:
-            ev = llm_eval(result, message, judge_model, category=category)
-            evals[ev["name"]] = ev
-
     # --- Set OpenInference I/O so Phoenix shows input/output columns ---
     trace_span.set_attribute("input.value", message)
     trace_span.set_attribute("output.value", result.content)
@@ -496,7 +497,7 @@ def evaluate_response(
         trace_span.set_attribute(f"cca.eval.{name}.score", ev["score"])
         trace_span.set_attribute(f"cca.eval.{name}.label", ev["label"])
 
-    # --- Defer annotations until span is closed + flushed ---
+    # --- Defer code eval annotations until span is closed + flushed ---
     # The trace_test fixture in conftest.py calls post_deferred_annotations()
     # AFTER the span closes and force_flush() completes. This avoids 404
     # errors from Phoenix when the span hasn't arrived yet.
@@ -523,6 +524,25 @@ def evaluate_response(
                 explanation=ev.get("explanation", ""),
             )
 
+    # --- Queue for Phoenix Dataset + Experiment (ALWAYS) ---
+    # Every evaluate_response() call creates a dataset example.
+    # LLM judge runs deferred after all tests (only if judge_model provided).
+    test_name = getattr(trace_span, "name", "unknown")
+    turn = _TURN_COUNTERS.get(test_name, 0) + 1
+    _TURN_COUNTERS[test_name] = turn
+
+    _EVAL_QUEUE.append({
+        "message": message,
+        "response": result.content,
+        "category": category,
+        "test_name": test_name,
+        "turn": turn,
+        "span_id": span_id,
+        "run_judge": judge_model is not None,
+        "judge_model": judge_model,
+        "code_evals": {k: dict(v) for k, v in evals.items()},
+    })
+
     # --- Gate on code evaluator failures ---
     # CODE evaluators are deterministic and catch real problems.
     for ev in evals.values():
@@ -547,18 +567,261 @@ def evaluate_response(
             f"label={ev['label']}, explanation={ev.get('explanation', '')}"
         )
 
-    # --- Gate on LLM judge hard failures ---
-    # "poor" quality or "failed" completion = test failure.
-    # "adequate"/"partial" = advisory (posted to Phoenix, doesn't gate).
-    # "error" = judge call failed (Spark2 down etc.) — skip, don't gate.
-    # This closes the gap between "system works" and "production quality".
-    for ev in evals.values():
-        if ev["annotator_kind"] != "LLM":
-            continue
-        if ev["label"] in ("poor", "failed"):
-            raise AssertionError(
-                f"LLM judge '{ev['name']}' FAILED: "
-                f"label={ev['label']}, explanation={ev.get('explanation', '')}"
-            )
+    # LLM judge gating is deferred — runs after all tests via
+    # run_deferred_experiment() in conftest.py's deferred_experiment fixture.
 
     return evals
+
+
+# ==================== Deferred Experiment Runner ====================
+
+
+def run_deferred_experiment(run_judge: bool = False) -> list[dict]:
+    """Create Phoenix Dataset + Experiment from ALL test results.
+
+    Always creates dataset + experiment with code evaluator scores.
+    If run_judge=True, also runs LLM judge on eligible items.
+
+    Args:
+        run_judge: Whether to run LLM judge evaluators (--with-judge flag)
+
+    Returns:
+        List of LLM judge result dicts (empty if run_judge=False)
+    """
+    if not _EVAL_QUEUE:
+        return []
+
+    import httpx
+    from datetime import datetime, timezone
+
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    total = len(_EVAL_QUEUE)
+    judge_eligible = sum(1 for item in _EVAL_QUEUE if item["run_judge"])
+
+    # --- 1. Create Phoenix Dataset (ALL items) ---
+    client = _get_phoenix_client()
+    if client is None:
+        log.warning("Phoenix unavailable — running judge-only fallback")
+        return _run_judge_only() if run_judge else []
+
+    try:
+        dataset = client.datasets.create_dataset(
+            name=f"cca-tests-{timestamp}",
+            inputs=[
+                {"message": item["message"], "category": item["category"]}
+                for item in _EVAL_QUEUE
+            ],
+            metadata=[
+                {
+                    "test_name": item["test_name"],
+                    "turn": item["turn"],
+                    "span_id": item.get("span_id", ""),
+                    "run_judge": item["run_judge"],
+                }
+                for item in _EVAL_QUEUE
+            ],
+        )
+        dataset_id = dataset.id
+        print(f"  Dataset: cca-tests-{timestamp} ({total} examples)")
+    except Exception as e:
+        log.warning("Dataset creation failed: %s", e)
+        return _run_judge_only() if run_judge else []
+
+    # --- 2. Create Experiment ---
+    try:
+        http = httpx.Client(timeout=30)
+        exp_resp = http.post(
+            f"{PHOENIX_URL}/v1/datasets/{dataset_id}/experiments",
+            json={
+                "name": f"pytest-{timestamp}",
+                "metadata": {
+                    "source": "pytest",
+                    "total_items": total,
+                    "judge_eligible": judge_eligible,
+                    "judge_enabled": run_judge,
+                },
+            },
+        )
+        exp_resp.raise_for_status()
+        experiment_id = exp_resp.json()["data"]["id"]
+        print(f"  Experiment: pytest-{timestamp}")
+    except Exception as e:
+        log.warning("Experiment creation failed: %s", e)
+        http.close()
+        return _run_judge_only() if run_judge else []
+
+    # --- 3. Process ALL queue items ---
+    judge_results = []
+    examples = _get_dataset_examples(http, dataset_id)
+
+    for i, item in enumerate(_EVAL_QUEUE):
+        test_name = item["test_name"]
+        turn = item["turn"]
+        will_judge = run_judge and item["run_judge"]
+        preview = item["message"][:50]
+
+        status_prefix = "J" if will_judge else "C"
+        print(
+            f"  [{status_prefix}] [{i+1}/{total}] {test_name} t{turn}: "
+            f"{preview}...",
+            end="", flush=True,
+        )
+
+        now = datetime.now(timezone.utc).isoformat()
+        example_id = examples[i]["id"] if i < len(examples) else None
+        if not example_id:
+            print(" skip", flush=True)
+            continue
+
+        # 3a. Submit run (pre-collected CCA output)
+        try:
+            run_resp = http.post(
+                f"{PHOENIX_URL}/v1/experiments/{experiment_id}/runs",
+                json={
+                    "dataset_example_id": example_id,
+                    "output": {"response": item["response"][:2000]},
+                    "repetition_number": 1,
+                    "start_time": now,
+                    "end_time": now,
+                },
+            )
+            run_resp.raise_for_status()
+            run_id = run_resp.json()["data"]["id"]
+        except Exception as e:
+            log.warning("Run submission failed: %s", e)
+            print(" run_err", flush=True)
+            continue
+
+        # 3b. Submit code evaluator results (ALL items)
+        for ev in item.get("code_evals", {}).values():
+            _submit_evaluation(http, run_id, ev, annotator_kind="CODE")
+
+        # 3c. Run LLM judge (only for eligible items with --with-judge)
+        if will_judge:
+            item_judge = []
+            for llm_eval in [eval_response_quality, eval_task_completion]:
+                ev = llm_eval(
+                    type("R", (), {"content": item["response"]})(),
+                    item["message"],
+                    item["judge_model"],
+                    category=item["category"],
+                )
+                ev["test_name"] = test_name
+                ev["turn"] = turn
+                ev["span_id"] = item.get("span_id")
+                item_judge.append(ev)
+                judge_results.append(ev)
+
+                # Submit to experiment
+                _submit_evaluation(http, run_id, ev, annotator_kind="LLM")
+
+            # Post LLM annotations to span (Traces tab)
+            if item.get("span_id"):
+                for ev in item_judge:
+                    _post_annotation(
+                        span_id=ev["span_id"],
+                        name=ev["name"],
+                        annotator_kind="LLM",
+                        label=ev["label"],
+                        score=ev["score"],
+                        explanation=ev.get("explanation", ""),
+                    )
+
+            has_fail = any(
+                ev["label"] in ("poor", "failed") for ev in item_judge
+            )
+            print(f" {'FAIL' if has_fail else 'ok'}", flush=True)
+        else:
+            print(" ok", flush=True)
+
+    http.close()
+    _EVAL_QUEUE.clear()
+    _TURN_COUNTERS.clear()
+    return judge_results
+
+
+def _submit_evaluation(
+    http, run_id: str, ev: dict, annotator_kind: str = "CODE",
+):
+    """Submit one evaluation to a Phoenix experiment run."""
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        http.post(
+            f"{PHOENIX_URL}/v1/experiment_evaluations",
+            json={
+                "experiment_run_id": run_id,
+                "name": ev["name"],
+                "annotator_kind": annotator_kind,
+                "result": {
+                    "score": ev.get("score", 0),
+                    "label": ev.get("label", ""),
+                    "explanation": ev.get("explanation", "")[:500],
+                },
+                "start_time": now,
+                "end_time": now,
+            },
+        )
+    except Exception as e:
+        log.warning("Eval submission failed (%s): %s", ev["name"], e)
+
+
+def _get_dataset_examples(http, dataset_id: str) -> list:
+    """Fetch dataset examples in creation order."""
+    try:
+        resp = http.get(
+            f"{PHOENIX_URL}/v1/datasets/{dataset_id}/examples",
+        )
+        resp.raise_for_status()
+        return resp.json()["data"]["examples"]
+    except Exception as e:
+        log.warning("Failed to fetch examples: %s", e)
+        return []
+
+
+def _run_judge_only() -> list[dict]:
+    """Fallback: run LLM judge without Phoenix experiment."""
+    results = []
+    total = len(_EVAL_QUEUE)
+    for i, item in enumerate(_EVAL_QUEUE):
+        if not item["run_judge"]:
+            continue
+        test_name = item["test_name"]
+        turn = item["turn"]
+        print(
+            f"  [{i+1}/{total}] {test_name} t{turn}...",
+            end="", flush=True,
+        )
+
+        for llm_eval in [eval_response_quality, eval_task_completion]:
+            ev = llm_eval(
+                type("R", (), {"content": item["response"]})(),
+                item["message"],
+                item["judge_model"],
+                category=item["category"],
+            )
+            ev["test_name"] = test_name
+            ev["turn"] = turn
+            ev["span_id"] = item.get("span_id")
+            results.append(ev)
+
+        if item.get("span_id"):
+            for ev in results[-2:]:
+                _post_annotation(
+                    span_id=ev["span_id"],
+                    name=ev["name"],
+                    annotator_kind="LLM",
+                    label=ev["label"],
+                    score=ev["score"],
+                    explanation=ev.get("explanation", ""),
+                )
+
+        has_fail = any(
+            ev["label"] in ("poor", "failed") for ev in results[-2:]
+        )
+        print(f" {'FAIL' if has_fail else 'ok'}", flush=True)
+
+    _EVAL_QUEUE.clear()
+    _TURN_COUNTERS.clear()
+    return results
