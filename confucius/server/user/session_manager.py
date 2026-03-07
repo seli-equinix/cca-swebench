@@ -604,6 +604,9 @@ class UserSessionManager:
         "link",
         "view",
         # common adjectives/nouns extracted as names
+        "looking",
+        "setting",
+        "main",
         "key",
         "trying",
         "sure",
@@ -662,6 +665,11 @@ class UserSessionManager:
 
         # Per-user locks to prevent concurrent read-modify-write races
         self._user_locks: Dict[str, asyncio.Lock] = {}
+
+        # Track recently deleted users to prevent background tasks
+        # (FactExtractor, NoteObserver) from re-creating deleted profiles
+        # via save_user_profile() upsert race conditions.
+        self._recently_deleted: set[str] = set()
 
         # Cache: whether user_contexts collection exists (avoid repeated get_collections)
         self._contexts_collection_verified: bool = False
@@ -1691,6 +1699,16 @@ class UserSessionManager:
         user's context embedding in the ``user_contexts`` collection for
         semantic auto-identification.
         """
+        # Guard: refuse to save if user was recently deleted.
+        # Prevents background tasks (FactExtractor) from re-creating
+        # profiles via upsert after delete_user_profile() ran.
+        if profile.user_id in self._recently_deleted:
+            logger.info(
+                "Refusing to save profile for recently deleted user: %s",
+                profile.display_name,
+            )
+            return
+
         if self._qdrant is not None and self._embedding_func is not None:
             try:
                 from qdrant_client.http import models
@@ -2594,6 +2612,10 @@ class UserSessionManager:
                     "sessions": profile.session_count,
                 },
             }
+
+        # Mark as recently deleted BEFORE actual delete to prevent
+        # concurrent background tasks from re-creating via upsert
+        self._recently_deleted.add(user_id)
 
         # Delete from Qdrant
         if self._qdrant is not None:

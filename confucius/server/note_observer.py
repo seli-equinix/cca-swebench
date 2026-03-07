@@ -752,6 +752,15 @@ class NoteObserver:
             if not facts:
                 return
 
+            # Filter out garbage facts (LLM sometimes returns "none"/"unknown")
+            _GARBAGE_VALUES = {"none", "unknown", "n/a", "null", ""}
+            facts = [
+                f for f in facts
+                if f["value"].strip().lower() not in _GARBAGE_VALUES
+            ]
+            if not facts:
+                return
+
             # Guard: skip if user was deleted while extracting
             if not await self._user_exists(user_id):
                 logger.info(
@@ -759,7 +768,18 @@ class NoteObserver:
                 )
                 return
 
+            stored = 0
             for fact in facts:
+                # Re-check before each store to avoid re-creating
+                # a profile that was deleted by a concurrent request
+                if stored > 0 and stored % 3 == 0:
+                    if not await self._user_exists(user_id):
+                        logger.info(
+                            "Stopping fact storage mid-loop: "
+                            "user %s deleted", user_id,
+                        )
+                        break
+
                 temp_session = Session(
                     session_id=session_id,
                     user_id=user_id,
@@ -768,6 +788,7 @@ class NoteObserver:
                 await session_mgr.remember_user_fact(
                     temp_session, fact["key"], fact["value"],
                 )
+                stored += 1
 
             logger.info(
                 "FactExtractor[%s]: stored %d facts for user %s: %s",
