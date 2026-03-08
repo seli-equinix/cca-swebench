@@ -259,6 +259,13 @@ RESPONSE_QUALITY_TEMPLATE = """Rate this AI agent response. The agent (CCA) is a
 
 When the agent says it stored a fact, deleted a profile, added a skill, or recalled user info, it actually performed these actions via tool calls. Do NOT penalize these as fabricated or impossible.
 
+Agent execution metadata (ground truth from server):
+- Route: {route} (the processing pipeline used)
+- Tool iterations: {tool_iterations} (0 = direct answer, 1+ = agent called tools)
+- User identified: {user_identified} (True = agent recognized and/or created user profile)
+
+Use this metadata to inform your rating. If tool_iterations > 0, the agent actively worked on the task. If user_identified is True, the introduction was processed.
+
 Answer with ONLY the label on the first line, then a one-sentence explanation.
 
 Labels: good | adequate | poor
@@ -275,6 +282,13 @@ poor = unhelpful, incorrect, or completely off-topic
 Label:"""
 
 TASK_COMPLETION_TEMPLATE = """Did this AI agent complete the user's task? The agent (CCA) has real tools for: coding, user profile management (create/delete/modify profiles, skills, aliases), persistent fact storage/recall across sessions, web search, and URL fetching. When it says it performed an action, it actually did via tool calls.
+
+Agent execution metadata (ground truth from server):
+- Route: {route} (the processing pipeline used)
+- Tool iterations: {tool_iterations} (0 = direct answer, 1+ = agent called tools)
+- User identified: {user_identified} (True = agent recognized and/or created user profile)
+
+Use this metadata to inform your rating. If tool_iterations > 0, the agent actively worked on the task.
 
 Answer with ONLY the label on the first line, then a one-sentence explanation.
 
@@ -351,6 +365,7 @@ def _run_llm_classify(
     rails: list,
     eval_name: str,
     category: str = "general",
+    metadata: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Run LLM judge via direct API call with thinking-model support.
 
@@ -364,16 +379,23 @@ def _run_llm_classify(
     # Map category codes to human-readable descriptions for the judge
     category_labels = {
         "user": "User profile management + coding task",
+        "coder": "Code generation, editing, search, and execution",
         "websearch": "Web search and information retrieval",
         "integration": "End-to-end integration (user lifecycle + coding)",
     }
     category_desc = category_labels.get(category, category)
 
-    prompt = template.format(
-        message=message,
-        response=response,
-        category=category_desc,
-    )
+    format_kwargs = {
+        "message": message,
+        "response": response,
+        "category": category_desc,
+        "route": "",
+        "tool_iterations": 0,
+        "user_identified": False,
+    }
+    if metadata:
+        format_kwargs.update(metadata)
+    prompt = template.format(**format_kwargs)
 
     try:
         api_resp = httpx.post(
@@ -434,6 +456,11 @@ def eval_response_quality(
         rails=RESPONSE_QUALITY_RAILS,
         eval_name="response_quality",
         category=category,
+        metadata={
+            "user_identified": getattr(result, "user_identified", False),
+            "tool_iterations": getattr(result, "metadata", {}).get("tool_iterations", 0),
+            "route": getattr(result, "metadata", {}).get("route", ""),
+        },
     )
 
 
@@ -449,6 +476,11 @@ def eval_task_completion(
         rails=TASK_COMPLETION_RAILS,
         eval_name="task_completion",
         category=category,
+        metadata={
+            "user_identified": getattr(result, "user_identified", False),
+            "tool_iterations": getattr(result, "metadata", {}).get("tool_iterations", 0),
+            "route": getattr(result, "metadata", {}).get("route", ""),
+        },
     )
 
 
@@ -557,6 +589,9 @@ def evaluate_response(
         "run_judge": judge_model is not None,
         "judge_model": judge_model,
         "code_evals": {k: dict(v) for k, v in evals.items()},
+        "user_identified": result.user_identified,
+        "tool_iterations": result.metadata.get("tool_iterations", 0),
+        "route": result.metadata.get("route", ""),
     })
 
     # --- Gate on code evaluator failures ---
@@ -722,9 +757,17 @@ def run_deferred_experiment(run_judge: bool = False) -> list[dict]:
         # 3c. Run LLM judge (only for eligible items with --with-judge)
         if will_judge:
             item_judge = []
+            mock_result = type("R", (), {
+                "content": item["response"],
+                "user_identified": item.get("user_identified", False),
+                "metadata": {
+                    "tool_iterations": item.get("tool_iterations", 0),
+                    "route": item.get("route", ""),
+                },
+            })()
             for llm_eval in [eval_response_quality, eval_task_completion]:
                 ev = llm_eval(
-                    type("R", (), {"content": item["response"]})(),
+                    mock_result,
                     item["message"],
                     item["judge_model"],
                     category=item["category"],
@@ -817,9 +860,17 @@ def _run_judge_only() -> list[dict]:
             end="", flush=True,
         )
 
+        mock_result = type("R", (), {
+            "content": item["response"],
+            "user_identified": item.get("user_identified", False),
+            "metadata": {
+                "tool_iterations": item.get("tool_iterations", 0),
+                "route": item.get("route", ""),
+            },
+        })()
         for llm_eval in [eval_response_quality, eval_task_completion]:
             ev = llm_eval(
-                type("R", (), {"content": item["response"]})(),
+                mock_result,
                 item["message"],
                 item["judge_model"],
                 category=item["category"],

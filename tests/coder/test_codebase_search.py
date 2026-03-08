@@ -40,7 +40,7 @@ class TestCodebaseSearch:
                 "health check functions. Show me the relevant code locations."
             )
             r1 = cca.chat(msg1, session_id=sid)
-            evaluate_response(r1, msg1, trace_test, judge_model, "integration")
+            evaluate_response(r1, msg1, trace_test, judge_model, "coder")
 
             trace_test.set_attribute("cca.test.t1_response", r1.content[:500])
             assert r1.content, "Turn 1 returned empty"
@@ -72,7 +72,7 @@ class TestCodebaseSearch:
                 "what collections they create or reference."
             )
             r2 = cca.chat(msg2, session_id=sid)
-            evaluate_response(r2, msg2, trace_test, judge_model, "integration")
+            evaluate_response(r2, msg2, trace_test, judge_model, "coder")
 
             trace_test.set_attribute("cca.test.t2_response", r2.content[:500])
             assert r2.content, "Turn 2 returned empty"

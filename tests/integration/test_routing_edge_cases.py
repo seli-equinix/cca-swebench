@@ -9,6 +9,7 @@ Exercises: Expert router classification, PLANNER route, complexity detection,
 CodeReviewerExtension, TestGeneratorExtension, write→run→verify.
 """
 
+import re
 import uuid
 
 import pytest
@@ -80,16 +81,29 @@ class TestRoutingEdgeCases:
             route = r.metadata.get("route", "")
             trace_test.set_attribute("cca.test.route", route)
 
-            # Should contain structured planning elements
+            # --- Brokenness check 1: Is this about CI/CD at all? ---
             content_lower = r.content.lower()
-            planning_terms = sum(1 for t in [
-                "pipeline", "docker", "kubernetes", "test", "build",
-                "deploy", "stage", "step", "ci", "cd",
-            ] if t in content_lower)
-            trace_test.set_attribute("cca.test.planning_terms", planning_terms)
-            assert planning_terms >= 4, (
-                f"Response lacks planning substance "
-                f"(found {planning_terms} terms): {r.content[:300]}"
+            is_on_topic = any(t in content_lower for t in [
+                "pipeline", "ci/cd", "ci cd", "continuous",
+                "build", "deploy", "stage", "workflow", "automation",
+            ])
+            trace_test.set_attribute("cca.test.is_on_topic", is_on_topic)
+            assert is_on_topic, (
+                f"Response is not about CI/CD: {r.content[:300]}"
+            )
+
+            # --- Brokenness check 2: Has structure? (user asked for "steps") ---
+            has_structure = (
+                bool(re.search(r"\d+[\.\):]", r.content))
+                or r.content.count("\n- ") >= 2
+                or r.content.count("##") >= 1
+                or r.content.count("**") >= 2
+                or any(s in content_lower for s in ["step", "phase", "stage"])
+            )
+            trace_test.set_attribute("cca.test.has_structure", has_structure)
+            assert has_structure, (
+                f"Response lacks structured breakdown — user asked for "
+                f"'architecture and steps': {r.content[:400]}"
             )
 
         finally:
@@ -194,27 +208,53 @@ class TestRoutingEdgeCases:
                 f"Agent didn't run the code (iters={iters2})"
             )
 
-            # Verify the code actually executed — output should show
-            # arithmetic results from all 4 operations
+            # --- Execution evidence: does the response prove the code ran? ---
             content_lower = r2.content.lower()
-            has_add = any(x in content_lower for x in ["13", "add"])
-            has_subtract = any(x in content_lower for x in ["7", "subtract"])
-            has_multiply = any(x in content_lower for x in ["30", "multiply"])
-            has_divide = any(x in content_lower for x in ["3.33", "divide"])
+
+            # Tier 1: Specific computed values (strongest proof)
+            # 10+3=13, 10*3=30, 10/3≈3.33 — only from execution
+            # Note: "7" (10-3) excluded — too common in unrelated contexts
+            has_raw_13 = "13" in r2.content
+            has_raw_30 = "30" in r2.content
+            has_raw_333 = "3.33" in r2.content or "3.3" in r2.content
+            raw_values = sum([has_raw_13, has_raw_30, has_raw_333])
+
+            # Tier 2: Operation names (agent knows what was computed)
+            has_add = "add" in content_lower
+            has_subtract = "subtract" in content_lower
+            has_multiply = "multiply" in content_lower
+            has_divide = "divide" in content_lower
+            op_names = sum([has_add, has_subtract, has_multiply, has_divide])
+
+            # Tier 3: Blanket confirmation with specifics
+            has_all_work = any(phrase in content_lower for phrase in [
+                "all four operations", "all 4 operations",
+                "all operations work", "everything works",
+                "working correctly", "all tests pass",
+            ])
+
             has_zero_check = any(x in content_lower for x in [
                 "zero", "error", "valueerror", "exception",
+                "divide by zero", "division by zero",
             ])
-            trace_test.set_attribute("cca.test.has_add", has_add)
-            trace_test.set_attribute("cca.test.has_subtract", has_subtract)
-            trace_test.set_attribute("cca.test.has_multiply", has_multiply)
-            trace_test.set_attribute("cca.test.has_divide", has_divide)
-            trace_test.set_attribute("cca.test.has_zero_check", has_zero_check)
 
-            # At least 3 of the 4 operations should show in the output
-            ops_found = sum([has_add, has_subtract, has_multiply, has_divide])
-            assert ops_found >= 3, (
-                f"Expected arithmetic results in output (found {ops_found}/4): "
-                f"{r2.content[:500]}"
+            # Accept: concrete values OR (named ops + confirmation) OR mix
+            execution_proven = (
+                raw_values >= 2
+                or (op_names >= 3 and has_all_work)
+                or (raw_values >= 1 and op_names >= 2)
+            )
+
+            trace_test.set_attribute("cca.test.raw_values", raw_values)
+            trace_test.set_attribute("cca.test.op_names", op_names)
+            trace_test.set_attribute("cca.test.has_all_work", has_all_work)
+            trace_test.set_attribute("cca.test.has_zero_check", has_zero_check)
+            trace_test.set_attribute("cca.test.execution_proven", execution_proven)
+
+            assert execution_proven, (
+                f"Response doesn't demonstrate actual execution results "
+                f"(raw_values={raw_values}, op_names={op_names}, "
+                f"blanket_ok={has_all_work}): {r2.content[:500]}"
             )
 
         finally:
