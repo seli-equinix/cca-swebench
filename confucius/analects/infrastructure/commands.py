@@ -131,6 +131,10 @@ def get_infra_commands() -> Dict[str, str]:
         "openssl": "SSL/TLS utility (certificate operations, testing)",
         "certbot": "Let's Encrypt certificate management",
         "step": "Step CLI for certificate authority operations",
+        # ── Database CLIs ──
+        "redis-cli": "Redis command-line interface (redis-cli -h HOST -a PASS ping)",
+        # ── Legacy network tools ──
+        "netstat": "Print network connections, routing tables, interface statistics",
         # ── Cluster-specific ──
         "gluster": "GlusterFS CLI (via SSH to Swarm nodes — not installed locally)",
     })

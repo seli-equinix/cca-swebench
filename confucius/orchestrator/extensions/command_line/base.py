@@ -248,9 +248,20 @@ class CommandLineExtension(TagWithIDExtension, ToolUseExtension):
 
         # Then check for commands that aren't in the allowed list
         if result.disallowed:
-            raise InvalidCommandLineInput(
-                f"`{command}` uses commands that aren't allowed: `{'`,`'.join(result.disallowed)}`. Please use only allowed commands: {','.join(self.allowed_commands.keys())}"
-            )
+            # Allow direct execution of scripts (./script.sh, /workspace/...)
+            # and dot-source shorthand (. script.sh → same as 'source')
+            non_path = set()
+            for cmd in result.disallowed:
+                if cmd.startswith("./") or cmd.startswith("/"):
+                    result.allowed.add("script")  # Mark as allowed script
+                elif cmd == ".":
+                    result.allowed.add("source")  # Dot is alias for source
+                else:
+                    non_path.add(cmd)
+            if non_path:
+                raise InvalidCommandLineInput(
+                    f"`{command}` uses commands that aren't allowed: `{'`,`'.join(non_path)}`. Please use only allowed commands: {','.join(self.allowed_commands.keys())}"
+                )
 
         return ",".join(result.allowed)
 
