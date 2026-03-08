@@ -58,10 +58,21 @@ class TestNoteRecall:
             assert user is not None, f"User '{name}' not created in session 1"
             user_id = user["user_id"]
 
+            # Verify notes were actually stored before proceeding
+            notes = cca.search_notes("websocket timescaledb", user_id=user_id)
+            trace_test.set_attribute("cca.test.notes_found", len(notes))
+            if notes:
+                trace_test.set_attribute(
+                    "cca.test.note_contents",
+                    [n.get("content", "")[:100] for n in notes[:3]],
+                )
+
             # ── Session 2: New session — recall without re-intro ──
+            # Question deliberately avoids session-1 keywords so that
+            # any mention in the response proves genuine recall via notes.
             msg2 = (
-                "What was that project I was working on "
-                "last time? Something about real-time streaming?"
+                "Hey, what was that project I was working on "
+                "last time? I can't remember the details."
             )
             r2 = cca.chat(msg2, session_id=sid2, user_id=user_id)
             # Skip judge — recall quality depends on note extraction
@@ -71,11 +82,14 @@ class TestNoteRecall:
             trace_test.set_attribute("cca.test.s2_response", r2.content[:300])
             assert r2.content, "Session 2 returned empty"
 
-            # Check if the unique topic or related concepts were recalled
+            # Check if distinctive terms from session 1 were recalled.
+            # These terms do NOT appear in the session 2 question, so
+            # the only way they show up is through genuine note recall.
             content_lower = r2.content.lower()
             recall_terms = [
-                unique_topic.lower(), "websocket", "timescaledb",
-                "real-time", "streaming",
+                unique_topic.lower(),  # Flamingo_xxxxx
+                "websocket",
+                "timescaledb",
             ]
             recalled = sum(1 for t in recall_terms if t in content_lower)
             trace_test.set_attribute("cca.test.recall_count", recalled)
@@ -85,7 +99,9 @@ class TestNoteRecall:
             # At least one distinctive term should be recalled
             assert recalled >= 1, (
                 f"Agent didn't recall any terms from session 1 "
-                f"(checked: {recall_terms}). Response: {r2.content[:300]}"
+                f"(checked: {recall_terms}). "
+                f"Notes stored: {len(notes)}. "
+                f"Response: {r2.content[:300]}"
             )
 
         finally:

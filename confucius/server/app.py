@@ -757,27 +757,32 @@ async def _handle_chat_completions(
                             )
                             span.set_status(StatusCode.OK)
 
-                            # Fire note observer in background with span context
-                            if note_observer:
-                                trajectory = pool_entry.cf.memory_manager.get_session_memory().messages
-                                ctx = get_current_context()
-                                asyncio.create_task(_run_note_observer_with_context(
-                                    ctx, note_observer, list(trajectory),
-                                    session_id, user,
-                                ))
-                                # Fire route-aware fact extraction for identified users
-                                if user and session.identified:
-                                    route_name = route.expert.value if route else "coder"
-                                    asyncio.create_task(note_observer.extract_user_facts(
-                                        user_message, user.user_id, session_id,
-                                        user_session_mgr, route=route_name,
-                                    ))
                         except Exception as e:
                             span.set_attribute("cca.status", "error")
                             span.set_attribute("cca.error", str(e)[:500])
                             span.set_status(StatusCode.ERROR, str(e)[:500])
                             raise
                         finally:
+                            # Fire note observer regardless of success/failure.
+                            # Even if the agent hit MaxIterationsReached, the
+                            # conversation trajectory still has valuable data
+                            # (user intro, project details, facts).
+                            if note_observer and user and getattr(user, "user_id", None):
+                                try:
+                                    trajectory = pool_entry.cf.memory_manager.get_session_memory().messages
+                                    ctx = get_current_context()
+                                    asyncio.create_task(_run_note_observer_with_context(
+                                        ctx, note_observer, list(trajectory),
+                                        session_id, user,
+                                    ))
+                                    if session.identified:
+                                        route_name = route.expert.value if route else "coder"
+                                        asyncio.create_task(note_observer.extract_user_facts(
+                                            user_message, user.user_id, session_id,
+                                            user_session_mgr, route=route_name,
+                                        ))
+                                except Exception:
+                                    logger.debug("Failed to fire note observer in finally", exc_info=True)
                             await io.signal_done()
 
             agent_task = asyncio.create_task(run_agent())
@@ -828,6 +833,7 @@ async def _handle_chat_completions(
                         if getattr(user, "user_id", None):
                             span.set_attribute(USER_ID, user.user_id)
 
+                    agent_error = None
                     try:
                         _user_id = getattr(user, "user_id", None) if user else None
                         with using_session(session_id):
@@ -835,38 +841,42 @@ async def _handle_chat_completions(
                                 await pool_entry.cf.invoke_analect(
                                     entry, EntryInput(question=user_message)
                                 )
+                        span.set_status(StatusCode.OK)
                     except Exception as e:
+                        agent_error = e
                         span.set_attribute("cca.status", "error")
                         span.set_attribute("cca.error", str(e)[:500])
                         span.set_status(StatusCode.ERROR, str(e)[:500])
                         logger.error(f"Agent execution failed: {e}")
+                    finally:
+                        # Fire note observer regardless of success/failure
+                        if note_observer and user and getattr(user, "user_id", None):
+                            try:
+                                trajectory = pool_entry.cf.memory_manager.get_session_memory().messages
+                                ctx = get_current_context()
+                                asyncio.create_task(_run_note_observer_with_context(
+                                    ctx, note_observer, list(trajectory),
+                                    session_id, user,
+                                ))
+                                if session.identified:
+                                    route_name = route.expert.value if route else "coder"
+                                    asyncio.create_task(note_observer.extract_user_facts(
+                                        user_message, user.user_id, session_id,
+                                        user_session_mgr, route=route_name,
+                                    ))
+                            except Exception:
+                                logger.debug("Failed to fire note observer in finally", exc_info=True)
+
+                    if agent_error:
                         return JSONResponse(
                             status_code=500,
                             content={
                                 "error": {
-                                    "message": f"Agent execution error: {e}",
+                                    "message": f"Agent execution error: {agent_error}",
                                     "type": "server_error",
                                 }
                             },
                         )
-
-                    span.set_status(StatusCode.OK)
-
-                    # Fire note observer in background with span context
-                    if note_observer:
-                        trajectory = pool_entry.cf.memory_manager.get_session_memory().messages
-                        ctx = get_current_context()
-                        asyncio.create_task(_run_note_observer_with_context(
-                            ctx, note_observer, list(trajectory),
-                            session_id, user,
-                        ))
-                        # Fire route-aware fact extraction for identified users
-                        if user and session.identified:
-                            route_name = route.expert.value if route else "coder"
-                            asyncio.create_task(note_observer.extract_user_facts(
-                                user_message, user.user_id, session_id,
-                                user_session_mgr, route=route_name,
-                            ))
 
                     # Collect response from IO buffer
                     response_text = io.get_response_text()
