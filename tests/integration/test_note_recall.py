@@ -1,13 +1,15 @@
-"""Flow test: Note-taker recall across sessions.
+"""Flow test: Note-taker recall across sessions + code validation.
 
 Journey: have a distinctive conversation → wait for note extraction →
-start a new session and ask about the previous topic → verify recall.
+start a new session and ask about the previous topic → verify recall →
+return to original session and validate the code runs.
 
 The NoteObserver fires after each request and extracts notes to Qdrant
 via the Spark1 Qwen3-8B model. Notes are then injected into future
 sessions via search_notes or <past_insights> context enrichment.
 
-Exercises: search_notes (NOTES group), NoteObserver pipeline.
+Exercises: search_notes (NOTES group), NoteObserver pipeline,
+code validation (bash tool execution).
 """
 
 import time
@@ -102,6 +104,44 @@ class TestNoteRecall:
                 f"(checked: {recall_terms}). "
                 f"Notes stored: {len(notes)}. "
                 f"Response: {r2.content[:300]}"
+            )
+
+            # ── Turn 3: Validate the code actually runs ──
+            # Back in session 1 where the agent created files.
+            # Don't specify filename (we don't know it) — the agent
+            # has session context and knows what it wrote.
+            msg3 = (
+                "Can you run the WebSocket handler code you wrote "
+                "and show me the output? Just a quick syntax or import "
+                "check is fine if it's a server."
+            )
+            r3 = cca.chat(msg3, session_id=sid1, user_id=user_id)
+            evaluate_response(r3, msg3, trace_test, judge_model, "integration")
+
+            trace_test.set_attribute("cca.test.s3_response", r3.content[:300])
+            assert r3.content, "Turn 3 returned empty"
+
+            iters3 = r3.metadata.get("tool_iterations", 0)
+            trace_test.set_attribute("cca.test.t3_iters", iters3)
+            assert iters3 >= 1, (
+                f"Agent didn't use tools to run code (iters={iters3})"
+            )
+
+            # Verify the agent actually executed something — not just
+            # described it. Check for execution indicators in the response.
+            content3_lower = r3.content.lower()
+            execution_indicators = [
+                "python", "import", "output", "error", "traceback",
+                "syntax", "exit", "listening", "running", "success",
+                "no errors", "py_compile", "check",
+            ]
+            executed = any(
+                ind in content3_lower for ind in execution_indicators
+            )
+            trace_test.set_attribute("cca.test.code_executed", executed)
+            assert executed, (
+                f"Agent didn't appear to execute the code. "
+                f"Response: {r3.content[:300]}"
             )
 
         finally:

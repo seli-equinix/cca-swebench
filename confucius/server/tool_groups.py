@@ -320,11 +320,14 @@ def build_extensions_for_route(
                 extensions.append(reviewer)
                 logger.info("Added CodeReviewerExtension (threshold=2)")
 
-            if expert == ExpertType.CODER:
-                tester = TestGeneratorExtension()
-                if tester.enabled:
-                    extensions.append(tester)
-                    logger.info("Added TestGeneratorExtension")
+    # TestGenerator: always-on for CODER. Zero-cost if no files created;
+    # fires only on str_replace_editor CREATE. The Functionary complexity
+    # estimate is unreliable for tasks that start simple but expand.
+    if expert == ExpertType.CODER:
+        tester = TestGeneratorExtension()
+        if tester.enabled:
+            extensions.append(tester)
+            logger.info("Added TestGeneratorExtension (always-on for coder)")
 
     # Always include these non-tool extensions
     extensions.append(PlainTextExtension())
