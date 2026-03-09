@@ -342,6 +342,7 @@ def session_cleanup(cca):
         test_prefixes = (
             "Onboard_", "Memory_", "CRUD_", "Lifecycle_", "NoteTest_",
             "EditFlow_", "BashTest_", "TestUser_",
+            "Planner_", "Coder_", "Infra_", "Recall_",
         )
         stale = [
             u.get("display_name", "")

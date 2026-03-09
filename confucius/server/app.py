@@ -321,12 +321,42 @@ def extract_last_user_message(messages: List[Any]) -> str:
     return ""
 
 
+def _list_session_memory_files(session_id: str) -> Optional[List[str]]:
+    """List memory files for a session (returns None if no memory dir)."""
+    from pathlib import Path
+    memory_dir = Path("/tmp/confucius_memory") / f"hierarchical_memory_{session_id}"
+    if not memory_dir.exists():
+        return None
+    files = [str(f.relative_to(memory_dir)) for f in sorted(memory_dir.rglob("*.md"))]
+    return files or None
+
+
+def _read_session_memory_files(session_id: str) -> Optional[List[Dict[str, str]]]:
+    """Read memory file contents for NoteObserver injection."""
+    from pathlib import Path
+    memory_dir = Path("/tmp/confucius_memory") / f"hierarchical_memory_{session_id}"
+    if not memory_dir.exists():
+        return None
+    files = []
+    for md_file in sorted(memory_dir.rglob("*.md")):
+        try:
+            content = md_file.read_text()
+        except Exception:
+            continue
+        files.append({
+            "path": str(md_file.relative_to(memory_dir)),
+            "content": content,
+        })
+    return files or None
+
+
 async def _run_note_observer_with_context(
     ctx: Any,
     observer: NoteObserver,
     messages: List[Any],
     session_id: str,
     user: Any,
+    memory_files: Optional[List[Dict[str, str]]] = None,
 ) -> None:
     """Run note observer with propagated OTel span context.
 
@@ -344,6 +374,7 @@ async def _run_note_observer_with_context(
             session_id=session_id,
             user_id=user.user_id if user else None,
             user_name=user.display_name if user else None,
+            memory_files=memory_files,
         )
     finally:
         detach_context(token)
@@ -771,9 +802,11 @@ async def _handle_chat_completions(
                                 try:
                                     trajectory = pool_entry.cf.memory_manager.get_session_memory().messages
                                     ctx = get_current_context()
+                                    mem_files = _read_session_memory_files(session_id)
                                     asyncio.create_task(_run_note_observer_with_context(
                                         ctx, note_observer, list(trajectory),
                                         session_id, user,
+                                        memory_files=mem_files,
                                     ))
                                     if session.identified:
                                         route_name = route.expert.value if route else "coder"
@@ -803,6 +836,7 @@ async def _handle_chat_completions(
                     circuit_breaker_fired=getattr(entry, "_circuit_breaker_fired", False),
                     tools_escalated=getattr(entry, "_tools_escalated", False),
                     escalated_groups=getattr(entry, "_escalated_groups", None) or None,
+                    memory_files=_list_session_memory_files(session_id),
                 ).model_dump()
 
             return StreamingResponse(
@@ -854,9 +888,11 @@ async def _handle_chat_completions(
                             try:
                                 trajectory = pool_entry.cf.memory_manager.get_session_memory().messages
                                 ctx = get_current_context()
+                                mem_files = _read_session_memory_files(session_id)
                                 asyncio.create_task(_run_note_observer_with_context(
                                     ctx, note_observer, list(trajectory),
                                     session_id, user,
+                                    memory_files=mem_files,
                                 ))
                                 if session.identified:
                                     route_name = route.expert.value if route else "coder"
@@ -907,6 +943,7 @@ async def _handle_chat_completions(
                         execution_time_ms=execution_time,
                         tools_escalated=getattr(entry, "_tools_escalated", False),
                         escalated_groups=getattr(entry, "_escalated_groups", None) or None,
+                        memory_files=_list_session_memory_files(session_id),
                     )
 
                     span.set_attribute("cca.status", "success")
@@ -1042,6 +1079,42 @@ async def delete_sessions(request: Request) -> Dict[str, Any]:
             except Exception:
                 pass
     return {"sessions_deleted": len(session_ids), "keys_cleaned": deleted}
+
+
+@app.get("/v1/sessions/{session_id}/memory")
+async def get_session_memory(session_id: str) -> Dict[str, Any]:
+    """Retrieve memory files created by the agent during a session.
+
+    Returns the list of memory file paths and optionally their contents.
+    Used for debugging and programmatic access — Continue.dev users
+    get their data in the chat response directly.
+    """
+    from pathlib import Path
+
+    memory_dir = Path("/tmp/confucius_memory") / f"hierarchical_memory_{session_id}"
+    if not memory_dir.exists():
+        raise HTTPException(status_code=404, detail="No memory files for this session")
+
+    files = []
+    for md_file in sorted(memory_dir.rglob("*.md")):
+        try:
+            content = md_file.read_text()
+        except Exception:
+            content = "<read error>"
+        files.append({
+            "path": str(md_file.relative_to(memory_dir)),
+            "content": content,
+            "size_bytes": md_file.stat().st_size,
+        })
+
+    if not files:
+        raise HTTPException(status_code=404, detail="No memory files for this session")
+
+    return {
+        "session_id": session_id,
+        "file_count": len(files),
+        "files": files,
+    }
 
 
 @app.get("/stats")

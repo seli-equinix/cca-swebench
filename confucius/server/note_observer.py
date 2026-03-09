@@ -315,11 +315,18 @@ class NoteObserver:
         user_id: Optional[str] = None,
         user_name: Optional[str] = None,
         project_context: Optional[str] = None,
+        memory_files: Optional[List[Dict[str, str]]] = None,
     ) -> None:
         """Extract notes from a completed conversation trajectory.
 
         This is fire-and-forget — all exceptions are caught and logged.
         Throttled by _NOTE_SEMAPHORE to prevent GPU contention.
+
+        Args:
+            memory_files: Optional list of {"path": ..., "content": ...} dicts
+                from the agent's hierarchical memory.  Appended to the
+                trajectory text so the extraction LLM can capture plans,
+                to-do lists, and other artefacts the agent stored.
         """
         tracer = get_tracer()
 
@@ -329,6 +336,8 @@ class NoteObserver:
                 span.set_attribute("cca.note.session_id", session_id)
                 span.set_attribute("cca.note.user_id", user_id or "anonymous")
                 span.set_attribute("cca.note.message_count", len(messages))
+                if memory_files:
+                    span.set_attribute("cca.note.memory_file_count", len(memory_files))
 
                 try:
                     if not messages:
@@ -346,7 +355,9 @@ class NoteObserver:
                         llm_span.set_attribute(OPENINFERENCE_SPAN_KIND, "LLM")
                         llm_span.set_attribute(LLM_MODEL_NAME, self._llm_model)
                         llm_span.set_attribute("cca.note.llm_url", self._llm_url)
-                        notes, llm_usage = await self._extract_notes(messages)
+                        notes, llm_usage = await self._extract_notes(
+                            messages, memory_files=memory_files,
+                        )
                         llm_span.set_attribute(
                             "cca.note.notes_extracted",
                             len(notes) if notes else 0,
@@ -445,7 +456,9 @@ class NoteObserver:
     # ------------------------------------------------------------------
 
     async def _extract_notes(
-        self, messages: List[Any]
+        self,
+        messages: List[Any],
+        memory_files: Optional[List[Dict[str, str]]] = None,
     ) -> tuple[List[Dict[str, Any]], Optional[Dict[str, Any]]]:
         """Call Spark1 Qwen3-8B to extract structured notes.
 
@@ -460,6 +473,20 @@ class NoteObserver:
 
         # Build a condensed view of the conversation
         trajectory_text = self._format_trajectory(messages)
+
+        # Append memory file contents so the LLM can extract insights
+        # from plans, to-do lists, etc. that the agent stored internally
+        if memory_files:
+            mem_parts = ["\n\n--- Agent Memory Files ---"]
+            for mf in memory_files:
+                path = mf.get("path", "unknown")
+                content = mf.get("content", "")
+                # Truncate individual files to keep within context
+                if len(content) > 1000:
+                    content = content[:1000] + "..."
+                mem_parts.append(f"\n[{path}]\n{content}")
+            trajectory_text += "\n".join(mem_parts)
+
         if not trajectory_text.strip():
             return [], None
 

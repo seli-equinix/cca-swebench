@@ -106,6 +106,11 @@ class TestRoutingEdgeCases:
                 f"'architecture and steps': {r.content[:400]}"
             )
 
+            # --- Verify no tool narration in response ---
+            assert "memory updated" not in content_lower, (
+                f"Response contains 'Memory updated': {r.content[:300]}"
+            )
+
         finally:
             tracker.cleanup()
 

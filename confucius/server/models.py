@@ -218,6 +218,9 @@ class ContextMetadata(BaseModel):
     escalated_groups: Optional[List[str]] = Field(
         None, description="Tool groups enabled via dynamic escalation"
     )
+    memory_files: Optional[List[str]] = Field(
+        None, description="Memory files created/modified during this request"
+    )
 
 
 class ChatCompletionResponse(BaseModel):
