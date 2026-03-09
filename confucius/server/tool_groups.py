@@ -132,19 +132,14 @@ def get_max_iterations(route: RouteDecision) -> int:
     Formula: max(base, min(estimated_steps * 3, 200)).
     The 3x multiplier accounts for debug cycles in coding tasks
     (run → error → fix → rerun burns ~3 iters per cycle).
-    The error circuit breaker (5 consecutive errors → force stop)
-    already prevents infinite loops, so this cap is mainly for cost.
 
-    SEARCH route uses direct 35B (no 8B research phase). Correct flow:
-    iter 0 (parallel web_search) → iter 1 (fetch_url_content) → iter 2
-    (write final answer). Cap at 8 — buffer for complexity without
-    allowing the runaway search loops that higher caps permitted.
+    All routes use DualModelOrchestrator's dynamic iteration extension:
+    when the agent is near the limit and still productive (no consecutive
+    errors), the limit auto-extends by 10.  The error circuit breaker
+    (5 consecutive errors → force stop) is the real loop prevention.
+    This initial limit is just a starting budget.
     """
     base = _BASE_MAX_ITERATIONS.get(route.expert, 20)
-    if route.expert == ExpertType.SEARCH:
-        # Direct 35B needs at most 8 iterations: search batch + fetch + answer.
-        # Old comment about "17+ 8B iterations" is obsolete — 8B removed.
-        return 8
     if route.is_simple:  # estimated_steps <= 3
         return _SIMPLE_MAX_ITERATIONS
     from_steps = route.estimated_steps * 3
