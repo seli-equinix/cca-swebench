@@ -247,7 +247,7 @@ class HierarchicalMemoryExtension(MemoryReminder):
                 value=memory.model_dump_json(),  # Simple JSON representation
                 display_name=self.artifact_display_name,
             )
-            await context.io.ai("Memory updated", attachments=[attachment])
+            await context.io.system("Memory updated", run_label="Memory", attachments=[attachment])
         except Exception as e:
             await context.io.system(
                 f"Failed to display memory due to {type(e).__name__}: {str(e)}",

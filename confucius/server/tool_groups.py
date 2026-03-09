@@ -47,7 +47,7 @@ class ToolGroup(str, Enum):
     FILE = "file"           # FileEditExtension (1 tool: TextEditor)
     SHELL = "shell"         # CommandLineExtension (1 tool: BashTool)
     MEMORY = "memory"       # HierarchicalMemoryExtension (6 tools)
-    PLANNER = "planner"     # LLMCodingArchitectExtension (0 tools, prompt-based)
+    ARCHITECT = "architect"  # LLMCodingArchitectExtension (context summarizer, 0 LLM tools)
     CODE_SEARCH = "code_search"  # CodeSearchExtension (3 tools: search_codebase, search_knowledge, index_workspace)
     GRAPH = "graph"         # GraphToolsExtension (3 tools: query_call_graph, find_orphan_functions, analyze_dependencies)
     DOCUMENT = "document"   # DocumentToolsExtension (4 tools: upload_document, search_documents, list_session_docs, promote_doc_to_knowledge)
@@ -69,7 +69,7 @@ ROUTE_TOOL_GROUPS: Dict[ExpertType, List[ToolGroup]] = {
         ToolGroup.NOTES,
     ],
     ExpertType.CODER: [
-        ToolGroup.PLANNER,
+        ToolGroup.ARCHITECT,
         ToolGroup.FILE,
         ToolGroup.SHELL,
         ToolGroup.MEMORY,
@@ -82,7 +82,7 @@ ROUTE_TOOL_GROUPS: Dict[ExpertType, List[ToolGroup]] = {
         ToolGroup.RULES,
     ],
     ExpertType.INFRASTRUCTURE: [
-        ToolGroup.PLANNER,
+        ToolGroup.ARCHITECT,
         ToolGroup.FILE,
         ToolGroup.SHELL,
         ToolGroup.MEMORY,
@@ -100,7 +100,7 @@ ROUTE_TOOL_GROUPS: Dict[ExpertType, List[ToolGroup]] = {
         ToolGroup.NOTES,        # search_notes (past session knowledge)
     ],
     ExpertType.PLANNER: [
-        ToolGroup.PLANNER,
+        ToolGroup.ARCHITECT,
         ToolGroup.MEMORY,
         ToolGroup.CODE_SEARCH,
         ToolGroup.WEB,
@@ -158,8 +158,8 @@ def _get_commands_for_route(expert: ExpertType) -> Optional[Dict[str, str]]:
 # ========================= Pool Groups =========================
 
 # Tool groups eligible for dynamic escalation (pool building).
-# Excludes USER (session-bound, already on USER route) and PLANNER
-# (prompt-only, no tool_use). These are the groups that can be
+# Excludes USER (session-bound, already on USER route) and ARCHITECT
+# (context summarizer, no tool_use). These are the groups that can be
 # selectively enabled mid-loop by the Functionary tool selector.
 POOLABLE_GROUPS: frozenset[ToolGroup] = frozenset({
     ToolGroup.FILE,
@@ -192,7 +192,7 @@ def _build_extension_for_group(
     Returns None if the group's prerequisites aren't met (e.g., no
     backend_clients for CODE_SEARCH, no user_extension for USER).
     """
-    if group == ToolGroup.PLANNER:
+    if group == ToolGroup.ARCHITECT:
         return LLMCodingArchitectExtension()
 
     elif group == ToolGroup.FILE:

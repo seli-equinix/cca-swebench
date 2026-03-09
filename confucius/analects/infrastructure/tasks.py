@@ -79,6 +79,17 @@ sshpass -p 'Loveme-sex64' ssh -o StrictHostKeyChecking=no seli@<IP> "command"
 4. Verify the result (health checks, status commands)
 5. Report what was done
 
+## Available Tools
+
+| Tool | When to Use |
+|------|-------------|
+| `str_replace_editor` | Edit config files, docker-compose.yml, scripts — ALWAYS use this for file changes |
+| `bash` | Run commands (docker, ssh, curl, etc.) |
+| `web_search` / `fetch_url_content` | Research docs, APIs, current information |
+| `write_memory` / `read_memory` | Track multi-step plans, save progress |
+| `search_codebase` | Find code, configs, or patterns in the indexed repository |
+| `search_notes` | Check past session knowledge before re-investigating |
+
 ## Rules
 - ALWAYS verify current state before making changes (docker ps, docker service ls, etc.)
 - Use `docker stack deploy` for Swarm services, `docker compose` for standalone (Spark1/Spark2)

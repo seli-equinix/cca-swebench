@@ -36,7 +36,7 @@ from ..orchestrator.extensions import Extension
 from .dual_model_orchestrator import DualModelOrchestrator
 from ..orchestrator.types import OrchestratorInput
 
-from ..analects.code.tasks import get_task_definition, get_search_task_definition
+from ..analects.code.tasks import get_task_definition, get_search_task_definition, get_planner_task_definition
 from ..analects.infrastructure.tasks import get_infra_task_definition
 from .expert_router import ExpertType, RouteDecision
 from ..core.config import get_tool_router_config
@@ -84,7 +84,7 @@ _ROUTE_TASK_DEFS = {
     ExpertType.CODER: get_task_definition,
     ExpertType.INFRASTRUCTURE: get_infra_task_definition,
     ExpertType.SEARCH: get_search_task_definition,  # dedicated search prompt
-    ExpertType.PLANNER: get_task_definition,      # reuse coder for now
+    ExpertType.PLANNER: get_planner_task_definition,
 }
 
 
