@@ -1001,6 +1001,11 @@ async def classify_request(
         decision = _guard_action_not_direct(decision, user_message)
         decision = _guard_copout_not_direct(decision, user_message)
 
+        # Guards for CLARIFY — should be overridden for recall and
+        # task-bearing messages (same patterns as direct guards).
+        decision = _guard_recall_not_clarify(decision, user_message)
+        decision = _guard_clarify_has_task(decision, user_message)
+
         span.set_status(StatusCode.OK)
 
         user_info = f", user='{decision.detected_user_name}'" if decision.detected_user_name else ""
@@ -1195,6 +1200,99 @@ def _guard_copout_not_direct(
         )
         decision.expert = ExpertType.CODER
         decision.direct_answer = ""
+        if decision.estimated_steps < 3:
+            decision.estimated_steps = 3
+        return decision
+
+    return decision
+
+
+# Patterns that indicate a memory recall / past-session question
+_RECALL_PATTERNS = re.compile(
+    r"\b("
+    r"what\s+was\s+(that|the|my)\s+(project|code|thing|task|work|system|app)"
+    r"|what\s+were\s+we\s+(working|talking|discussing)"
+    r"|last\s+time"
+    r"|previous\s+(session|conversation|discussion|chat|time)"
+    r"|what\s+did\s+(we|I|you)\s+(discuss|talk|work|build|create)"
+    r"|what\s+do\s+you\s+(know|remember)\s+about"
+    r"|do\s+you\s+remember"
+    r"|can\s+you\s+recall"
+    r"|remind\s+me"
+    r"|what\s+was\s+I\s+(working|building|doing|creating)"
+    r"|I\s+can.?t\s+remember"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def _guard_recall_not_clarify(
+    decision: RouteDecision, user_message: str
+) -> RouteDecision:
+    """Override clarify→user for memory recall questions.
+
+    Questions like "what was that project last time?" or "remind me
+    what we discussed" should use the USER route (which has notes/profile
+    tools), not ask for clarification.
+    """
+    if decision.expert != ExpertType.CLARIFY:
+        return decision
+
+    if _RECALL_PATTERNS.search(user_message):
+        logger.warning(
+            "Router guard: overriding clarify→user for recall question: %s",
+            user_message[:80],
+        )
+        decision.expert = ExpertType.USER
+        decision.clarification_question = ""
+        if decision.estimated_steps < 3:
+            decision.estimated_steps = 3
+        return decision
+
+    return decision
+
+
+def _guard_clarify_has_task(
+    decision: RouteDecision, user_message: str
+) -> RouteDecision:
+    """Override clarify→coder/search if the message has a clear task.
+
+    The router sometimes routes to 'clarify' for messages that have
+    coding tasks or search keywords. Apply the same patterns as the
+    direct-answer guards.
+    """
+    if decision.expert != ExpertType.CLARIFY:
+        return decision
+
+    if _CODING_PATTERNS.search(user_message):
+        logger.warning(
+            "Router guard: overriding clarify→coder for coding request: %s",
+            user_message[:80],
+        )
+        decision.expert = ExpertType.CODER
+        decision.clarification_question = ""
+        if decision.estimated_steps < 3:
+            decision.estimated_steps = 3
+        return decision
+
+    if _SEARCH_PATTERNS.search(user_message):
+        logger.warning(
+            "Router guard: overriding clarify→search for recency query: %s",
+            user_message[:80],
+        )
+        decision.expert = ExpertType.SEARCH
+        decision.clarification_question = ""
+        if decision.estimated_steps < 3:
+            decision.estimated_steps = 3
+        return decision
+
+    if _ACTION_PATTERNS.search(user_message):
+        logger.warning(
+            "Router guard: overriding clarify→coder for action request: %s",
+            user_message[:80],
+        )
+        decision.expert = ExpertType.CODER
+        decision.clarification_question = ""
         if decision.estimated_steps < 3:
             decision.estimated_steps = 3
         return decision
