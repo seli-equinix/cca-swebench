@@ -31,8 +31,8 @@ services:
       - QDRANT_URL=http://192.168.4.205:6333
       - EMBEDDING_URL=http://192.168.4.205:8200
       - SEARXNG_URL=http://192.168.4.205:8888
-      # Code intelligence backends
-      - MEMGRAPH_HOST=192.168.4.202
+      # Code intelligence backends (Memgraph on Spark1)
+      - MEMGRAPH_HOST=192.168.4.205
       - MEMGRAPH_PORT=7687
       # Phoenix observability (traces → Phoenix UI)
       - PHOENIX_COLLECTOR_ENDPOINT=http://192.168.4.204:4317
@@ -85,7 +85,7 @@ services:
       - QDRANT_URL=http://192.168.4.205:6333
       - EMBEDDING_URL=http://192.168.4.205:8200
       - SEARXNG_URL=http://192.168.4.205:8888
-      - MEMGRAPH_HOST=192.168.4.202
+      - MEMGRAPH_HOST=192.168.4.205
       - MEMGRAPH_PORT=7687
       - PHOENIX_COLLECTOR_ENDPOINT=http://192.168.4.204:4317
       - PHOENIX_PROJECT_NAME=cca-dev

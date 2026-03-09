@@ -153,14 +153,14 @@ cost_per_1m_input = 0.0
 cost_per_1m_output = 0.0
 
 # ──────────────────────────────────────────────
-# EXPERT ROUTER (Functionary on node5)
+# EXPERT ROUTER (Functionary on Spark1)
 # ──────────────────────────────────────────────
 # Uses the small Functionary 8B model to classify incoming requests
 # and route them to the appropriate CCA expert entry.
 
 [router]
 enabled = true
-url = "http://192.168.4.204:8001"     # Functionary on node5 RTX 5070
+url = "http://192.168.4.205:8001"     # Functionary on Spark1 (llama.cpp)
 timeout_ms = 10000                     # Classification timeout (generous for cold starts)
 fallback_entry = "coder"               # If classification fails, use this entry
 temperature = 0.1                      # Low temp for deterministic routing
@@ -168,7 +168,7 @@ temperature = 0.1                      # Low temp for deterministic routing
 # In-loop tool selection (Phase 2 — Functionary-based smart tool escalation)
 [tool_router]
 enabled = true
-url = "http://192.168.4.204:8001"
+url = "http://192.168.4.205:8001"
 timeout_ms = 10000
 temperature = 0.1
 
