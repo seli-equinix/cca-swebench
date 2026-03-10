@@ -1,16 +1,17 @@
 # Confucius Code Agent (CCA) Stack
-# Deployed on Spark1 (192.168.4.205) via docker compose (NOT Swarm)
+# Deploy via: docker compose -f cca-compose.yml up -d cca
+#
+# Configuration:
+#   1. Copy config.toml.example → config.toml and edit for your infrastructure
+#   2. Copy .env.example → .env and set secrets (API keys, passwords)
+#   3. All service URLs come from config.toml [services] section
+#   4. Env vars in .env override config.toml when set
 #
 # Usage:
 #   Build:       docker compose -f cca-compose.yml build
 #   Start:       docker compose -f cca-compose.yml up -d cca
 #   Shell:       docker compose -f cca-compose.yml run --rm cca bash
 #   SWE-bench:   docker compose -f cca-compose.yml run --rm cca-swebench
-#
-# LLM Backend:
-#   Model selection configured via config.toml (mounted at /etc/cca/config.toml).
-#   Switch between cloud and local providers by editing [active] section.
-#   Fallback: OPENAI_API_KEY + OPENAI_BASE_URL env vars for default OpenAI endpoint.
 
 services:
   # CCA HTTP server (Agent-as-a-Model Endpoint)
@@ -24,34 +25,29 @@ services:
       - .env
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY:-dummy}
-      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-http://192.168.4.208:8000/v1}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
       - CCA_CONFIG_PATH=/etc/cca/config.toml
-      # User-awareness infrastructure (shared with MCP server)
-      - REDIS_URL=${REDIS_URL}
-      - QDRANT_URL=http://192.168.4.205:6333
-      - EMBEDDING_URL=http://192.168.4.205:8200
-      - SEARXNG_URL=http://192.168.4.205:8888
-      # Code intelligence backends (Memgraph on Spark1)
-      - MEMGRAPH_HOST=192.168.4.205
-      - MEMGRAPH_PORT=7687
-      # Phoenix observability (traces → Phoenix UI)
-      - PHOENIX_COLLECTOR_ENDPOINT=http://192.168.4.204:4317
-      - PHOENIX_PROJECT_NAME=cca-http
-      # No OTEL_ATTRIBUTE_VALUE_LENGTH_LIMIT — OTel SDK default has no truncation.
-      # (Setting =0 truncates ALL string attributes to empty strings — never set it)
-    # SECURITY: host networking is intentional — CCA's infra expert needs
-    # direct access to Swarm nodes, Redis, Qdrant, Memgraph on the LAN.
-    # Combined with docker.io and workspace :rw, the container has near-host
-    # access.  Mitigated by: non-root user (uid 1000), resource limits,
-    # API key auth on destructive endpoints, LAN-only deployment.
+      # Service URL overrides (leave empty to use config.toml [services] values)
+      - REDIS_URL=${REDIS_URL:-}
+      - QDRANT_URL=${QDRANT_URL:-}
+      - EMBEDDING_URL=${EMBEDDING_URL:-}
+      - SEARXNG_URL=${SEARXNG_URL:-}
+      - MEMGRAPH_HOST=${MEMGRAPH_HOST:-}
+      - MEMGRAPH_PORT=${MEMGRAPH_PORT:-}
+      - PHOENIX_COLLECTOR_ENDPOINT=${PHOENIX_COLLECTOR_ENDPOINT:-}
+      - PHOENIX_PROJECT_NAME=${PHOENIX_PROJECT_NAME:-}
+      # INFRA expert SSH + topology
+      - CCA_SSH_PASSWORD=${CCA_SSH_PASSWORD:-}
+      - CCA_INFRA_CONFIG_PATH=/etc/cca/infrastructure.toml
+    # Host networking: CCA accesses all co-located services via localhost.
+    # For bridge networking, update config.toml [services] with container names.
     network_mode: host
     entrypoint: ["confucius", "--port", "8500"]
     volumes:
-      - ${CCA_WORKSPACE:-/home/seli/code}:/workspace:rw
+      - ${CCA_WORKSPACE:-/workspace}:/workspace:rw
       - cca-sessions:/home/cca/.confucius
       - ./config.toml:/etc/cca/config.toml:ro
-      # Indexable paths for code intelligence (read-only)
-      - /home/seli/docker-swarm-stacks:/home/seli/docker-swarm-stacks:ro
+      - ./infrastructure.toml:/etc/cca/infrastructure.toml:ro
     working_dir: /workspace
     restart: unless-stopped
     deploy:
@@ -79,26 +75,28 @@ services:
       - .env
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY:-dummy}
-      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-http://192.168.4.208:8000/v1}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
       - CCA_CONFIG_PATH=/etc/cca/config.toml
-      - REDIS_URL=${REDIS_URL}
-      - QDRANT_URL=http://192.168.4.205:6333
-      - EMBEDDING_URL=http://192.168.4.205:8200
-      - SEARXNG_URL=http://192.168.4.205:8888
-      - MEMGRAPH_HOST=192.168.4.205
-      - MEMGRAPH_PORT=7687
-      - PHOENIX_COLLECTOR_ENDPOINT=http://192.168.4.204:4317
-      - PHOENIX_PROJECT_NAME=cca-dev
+      - REDIS_URL=${REDIS_URL:-}
+      - QDRANT_URL=${QDRANT_URL:-}
+      - EMBEDDING_URL=${EMBEDDING_URL:-}
+      - SEARXNG_URL=${SEARXNG_URL:-}
+      - MEMGRAPH_HOST=${MEMGRAPH_HOST:-}
+      - MEMGRAPH_PORT=${MEMGRAPH_PORT:-}
+      - PHOENIX_COLLECTOR_ENDPOINT=${PHOENIX_COLLECTOR_ENDPOINT:-}
+      - PHOENIX_PROJECT_NAME=${PHOENIX_PROJECT_NAME:-}
+      - CCA_SSH_PASSWORD=${CCA_SSH_PASSWORD:-}
+      - CCA_INFRA_CONFIG_PATH=/etc/cca/infrastructure.toml
     network_mode: host
     entrypoint: ["confucius", "--port", "8500"]
     volumes:
-      - ${CCA_WORKSPACE:-/home/seli/code}:/workspace:rw
+      - ${CCA_WORKSPACE:-/workspace}:/workspace:rw
       - cca-sessions:/home/cca/.confucius
       # Mount source for live editing (no rebuild needed)
       - ./confucius:/app/confucius:ro
       - ./scripts:/app/scripts:ro
       - ./config.toml:/etc/cca/config.toml:ro
-      - /home/seli/docker-swarm-stacks:/home/seli/docker-swarm-stacks:ro
+      - ./infrastructure.toml:/etc/cca/infrastructure.toml:ro
     working_dir: /workspace
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8500/health"]
@@ -120,14 +118,16 @@ services:
       - .env
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY:-dummy}
-      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-http://192.168.4.208:8000/v1}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
       - CCA_CONFIG_PATH=/etc/cca/config.toml
+      - CCA_INFRA_CONFIG_PATH=/etc/cca/infrastructure.toml
     network_mode: host
     entrypoint: ["python", "-m", "scripts.run_swebench"]
     volumes:
-      - ${CCA_WORKSPACE:-/home/seli/code}:/workspace:rw
+      - ${CCA_WORKSPACE:-/workspace}:/workspace:rw
       - cca-sessions:/home/cca/.confucius
       - ./config.toml:/etc/cca/config.toml:ro
+      - ./infrastructure.toml:/etc/cca/infrastructure.toml:ro
 
 volumes:
   cca-sessions:

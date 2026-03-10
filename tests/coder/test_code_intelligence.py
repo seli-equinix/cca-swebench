@@ -6,7 +6,7 @@ analyze file dependencies. All via the CODER route using GRAPH tools.
 Exercises: query_call_graph, find_orphan_functions, analyze_dependencies
 (GRAPH group), CODER route.
 
-Requires: Memgraph on 192.168.4.205:7687 with indexed codebase.
+Requires: Memgraph (see config.toml [services]) with indexed codebase.
 """
 
 import uuid

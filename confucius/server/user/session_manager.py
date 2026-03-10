@@ -11,10 +11,8 @@ Ported from MCP server session_manager.py. Provides:
 - Session storage in Redis with TTL
 - Graceful degradation (local fallback if infrastructure unavailable)
 
-Shared infrastructure with MCP server on Spark1:
-- Redis: 192.168.4.205:6379 (session storage)
-- Qdrant: 192.168.4.205:6333 (user profiles)
-- Embedding: 192.168.4.205:8200 (semantic matching)
+All service URLs come from config.toml [services] section.
+Env vars (REDIS_URL, QDRANT_URL, etc.) override when set.
 """
 
 from __future__ import annotations
@@ -31,16 +29,9 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
-logger = logging.getLogger(__name__)
+from ...core.config import get_services_config
 
-# ---------------------------------------------------------------------------
-# Default connection URLs (overridable via constructor or env vars)
-# ---------------------------------------------------------------------------
-DEFAULT_REDIS_URL: str = os.getenv(
-    "REDIS_URL", "redis://:Loveme-sex64@192.168.4.205:6379/0"
-)
-DEFAULT_QDRANT_URL: str = os.getenv("QDRANT_URL", "http://192.168.4.205:6333")
-DEFAULT_EMBEDDING_URL: str = os.getenv("EMBEDDING_URL", "http://192.168.4.205:8200")
+logger = logging.getLogger(__name__)
 
 # Session / profile TTL defaults
 SESSION_TTL: int = int(os.getenv("SESSION_TTL", "86400"))  # 24 hours
@@ -646,13 +637,14 @@ class UserSessionManager:
 
     def __init__(
         self,
-        redis_url: str = DEFAULT_REDIS_URL,
-        qdrant_url: str = DEFAULT_QDRANT_URL,
-        embedding_url: str = DEFAULT_EMBEDDING_URL,
+        redis_url: str | None = None,
+        qdrant_url: str | None = None,
+        embedding_url: str | None = None,
     ) -> None:
-        self._redis_url = redis_url
-        self._qdrant_url = qdrant_url
-        self._embedding_url = embedding_url
+        svc = get_services_config()
+        self._redis_url = redis_url or os.getenv("REDIS_URL") or svc.redis_url
+        self._qdrant_url = qdrant_url or os.getenv("QDRANT_URL") or svc.qdrant_url
+        self._embedding_url = embedding_url or os.getenv("EMBEDDING_URL") or svc.embedding_url
 
         # Backends (set during initialize())
         self._redis: Any = None  # redis.asyncio.Redis

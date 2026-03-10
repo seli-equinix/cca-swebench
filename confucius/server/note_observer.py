@@ -7,11 +7,11 @@ Fires asynchronously after every HTTP request to extract insights from the
 coder's conversation trajectory.  Notes are stored in Qdrant for semantic
 search; raw trajectories are stored in Redis for the deep note-taker.
 
-Infrastructure (all on Spark1, already running):
-- Qdrant:     192.168.4.205:6333  (cca_notes collection)
-- Embedding:  192.168.4.205:8200  (Qwen3-Embedding-8B, 4096 dims)
-- Redis:      192.168.4.205:6379  (trajectory storage, 24h TTL)
-- vLLM:       192.168.4.205:8400  (Qwen3-8B-FP8 for extraction)
+Infrastructure (configured in config.toml [services]):
+- Qdrant:     cca_notes collection (qdrant_url)
+- Embedding:  Qwen3-Embedding-8B, 4096 dims (embedding_url)
+- Redis:      trajectory storage, 24h TTL (redis_url)
+- vLLM:       note-taker model for extraction (from config.toml [providers])
 """
 
 from __future__ import annotations
@@ -40,11 +40,9 @@ from .user.session_manager import Session
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Defaults (overridable via env or constructor)
+# Defaults from config.toml [services] (env vars override)
 # ---------------------------------------------------------------------------
-DEFAULT_QDRANT_URL: str = os.getenv("QDRANT_URL", "http://192.168.4.205:6333")
-DEFAULT_EMBEDDING_URL: str = os.getenv("EMBEDDING_URL", "http://192.168.4.205:8200")
-DEFAULT_REDIS_URL: str = os.getenv("REDIS_URL", "")
+from ..core.config import get_services_config as _get_svc
 
 NOTES_COLLECTION: str = "cca_notes"
 EMBEDDING_DIMS: int = 4096
@@ -184,18 +182,19 @@ class NoteObserver:
         *,
         llm_url: str,
         llm_model: str,
-        qdrant_url: str = DEFAULT_QDRANT_URL,
-        embedding_url: str = DEFAULT_EMBEDDING_URL,
-        redis_url: str = DEFAULT_REDIS_URL,
+        qdrant_url: str | None = None,
+        embedding_url: str | None = None,
+        redis_url: str | None = None,
         redis_client: Any = None,
         temperature: float = 0.3,
         max_trajectory_messages: int = 50,
     ) -> None:
+        svc = _get_svc()
         self._llm_url = llm_url.rstrip("/")
         self._llm_model = llm_model
-        self._qdrant_url = qdrant_url
-        self._embedding_url = embedding_url
-        self._redis_url = redis_url
+        self._qdrant_url = qdrant_url or os.getenv("QDRANT_URL") or svc.qdrant_url
+        self._embedding_url = embedding_url or os.getenv("EMBEDDING_URL") or svc.embedding_url
+        self._redis_url = redis_url or os.getenv("REDIS_URL") or svc.redis_url
         self._temperature = temperature
         self._max_messages = max_trajectory_messages
 

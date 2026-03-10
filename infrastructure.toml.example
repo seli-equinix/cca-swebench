@@ -1,0 +1,92 @@
+# CCA Infrastructure Topology (Optional)
+# Copy to infrastructure.toml and edit for your environment.
+#
+# This file describes your cluster layout for the Infrastructure expert.
+# If omitted, the INFRA expert works without topology context.
+#
+# Service endpoints (Redis, Qdrant, vLLM, etc.) come from config.toml [services],
+# NOT from this file. This file only describes the physical/virtual topology.
+
+[ssh]
+user = "your-ssh-user"
+# Password: set CCA_SSH_PASSWORD env var (never stored in config files)
+
+# ──────────────────────────────────────────────
+# DOCKER SWARM NODES (optional)
+# ──────────────────────────────────────────────
+
+# [[swarm_nodes]]
+# name = "manager1"
+# ip = "10.0.0.1"
+# role = "Manager (Leader)"
+# hardware = "Dell R640"
+# cpu = "Xeon Gold 6248, 40T"
+# ram = "128GB"
+# gpu = ""
+#
+# [[swarm_nodes]]
+# name = "worker1"
+# ip = "10.0.0.2"
+# role = "Worker"
+# hardware = "Dell R740"
+# cpu = "Xeon Gold 6248, 40T"
+# ram = "256GB"
+# gpu = "A100 80GB"
+
+# ──────────────────────────────────────────────
+# STANDALONE AI NODES
+# ──────────────────────────────────────────────
+
+# [[standalone_nodes]]
+# name = "gpu-node-1"
+# ip = "10.0.0.10"
+# purpose = "CCA, Redis, Qdrant, Embedding"
+#
+# [[standalone_nodes]]
+# name = "gpu-node-2"
+# ip = "10.0.0.11"
+# purpose = "vLLM inference"
+
+# ──────────────────────────────────────────────
+# LOCAL SERVICES (on the CCA host node)
+# ──────────────────────────────────────────────
+# Container names and quick-check commands.
+# Use $REDIS_PASSWORD placeholder — it will be substituted from config.toml.
+
+# [[local_services]]
+# name = "Redis"
+# container = "redis"
+# port = 6379
+# check = "redis-cli -h 127.0.0.1 -a $REDIS_PASSWORD ping"
+#
+# [[local_services]]
+# name = "Qdrant"
+# container = "qdrant"
+# port = 6333
+# check = "curl -s http://127.0.0.1:6333/collections | jq ."
+
+# ──────────────────────────────────────────────
+# REMOTE SERVICES
+# ──────────────────────────────────────────────
+# Use $VLLM_HOST, $MEMGRAPH_HOST, $MEMGRAPH_PORT — substituted from config.toml.
+
+# [[remote_services]]
+# name = "vLLM (main LLM)"
+# location = "gpu-node-2"
+# check = "curl -s http://$VLLM_HOST:8000/health"
+#
+# [[remote_services]]
+# name = "Memgraph"
+# location = "gpu-node-1"
+# check = "python3 -c \"from neo4j import GraphDatabase; d=GraphDatabase.driver('bolt://$MEMGRAPH_HOST:$MEMGRAPH_PORT'); print(d.session().run('RETURN 1').single()[0]); d.close()\""
+
+# ──────────────────────────────────────────────
+# KEY SERVICES (optional description)
+# ──────────────────────────────────────────────
+
+# [swarm_services]
+# description = """
+# - HAProxy: Reverse proxy
+# - Portainer: Container management
+# - Registry: Docker registry
+# """

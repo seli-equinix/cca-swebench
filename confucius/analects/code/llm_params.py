@@ -50,7 +50,7 @@ QWEN3_80B_CODER = LLMParams(
     max_tokens=16384,
     temperature=0.3,
     additional_kwargs={
-        "base_url": "http://192.168.4.208:8000/v1",
+        "base_url": "http://localhost:8000/v1",
     },
 )
 
@@ -61,6 +61,6 @@ QWEN3_8B_NOTETAKER = LLMParams(
     temperature=0.3,
     top_p=0.9,
     additional_kwargs={
-        "base_url": "http://192.168.4.205:8400/v1",
+        "base_url": "http://localhost:8400/v1",
     },
 )

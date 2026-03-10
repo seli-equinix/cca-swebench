@@ -91,7 +91,7 @@ resp = await client.get(f"{SEARXNG_URL}/search", params=params, timeout=15.0)
 # Extracts: title, url, content (first 500 chars) per result
 ```
 
-**Backend**: SearXNG at `192.168.4.205:8888`
+**Backend**: SearXNG (see `config.toml` `[services]` `searxng_url`)
 **Status**: **ALREADY PORTED** to CCA in `utility_tools.py` (UtilityToolsExtension)
 
 ---
@@ -695,7 +695,7 @@ elif query_type == "call_chain":
     results = await graph_adapter.get_call_chain(function_name, depth, direction, project, limit)
 ```
 
-**Backend**: Memgraph (192.168.4.205:7687) via `memgraph_adapter.py`
+**Backend**: Memgraph (see `config.toml` `[services]` `memgraph_host`/`memgraph_port`) via `memgraph_adapter.py`
 **Migration notes**: Requires Memgraph client. Pure query tool — easy to port.
 
 ---

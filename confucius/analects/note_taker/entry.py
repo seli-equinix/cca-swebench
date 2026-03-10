@@ -21,12 +21,7 @@ from .tasks import NOTE_TAKER_PROMPT
 
 logger = logging.getLogger(__name__)
 
-# Default infrastructure URLs (same as session_manager.py)
-DEFAULT_QDRANT_URL: str = os.getenv("QDRANT_URL", "http://192.168.4.205:6333")
-DEFAULT_EMBEDDING_URL: str = os.getenv("EMBEDDING_URL", "http://192.168.4.205:8200")
-DEFAULT_REDIS_URL: str = os.getenv(
-    "REDIS_URL", "redis://:Loveme-sex64@192.168.4.205:6379/0"
-)
+from ...core.config import get_services_config
 
 
 def _create_note_writer_extension(
@@ -45,9 +40,12 @@ def _create_note_writer_extension(
         from ...orchestrator.extensions.note_writer import NoteWriterExtension
         from ...server.user.session_manager import _ProfileEmbeddingFunc
 
-        qdrant = QdrantClient(url=DEFAULT_QDRANT_URL)
-        redis_client = redis_async.from_url(DEFAULT_REDIS_URL, decode_responses=True)
-        embedding_func = _ProfileEmbeddingFunc(DEFAULT_EMBEDDING_URL)
+        svc = get_services_config()
+        qdrant = QdrantClient(url=os.getenv("QDRANT_URL") or svc.qdrant_url)
+        redis_client = redis_async.from_url(
+            os.getenv("REDIS_URL") or svc.redis_url, decode_responses=True
+        )
+        embedding_func = _ProfileEmbeddingFunc(os.getenv("EMBEDDING_URL") or svc.embedding_url)
 
         return NoteWriterExtension(
             qdrant=qdrant,

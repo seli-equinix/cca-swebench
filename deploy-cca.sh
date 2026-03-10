@@ -9,9 +9,9 @@
 #   4. Run CCA agent
 set -e
 
-SPARK1="192.168.4.205"
-SPARK1_USER="seli"
-SPARK1_PASS="${SPARK1_PASS:?Set SPARK1_PASS env var}"
+SPARK1="${CCA_DEPLOY_HOST:?Set CCA_DEPLOY_HOST env var (e.g. 192.168.1.100)}"
+SPARK1_USER="${CCA_DEPLOY_USER:-seli}"
+SPARK1_PASS="${CCA_DEPLOY_PASS:?Set CCA_DEPLOY_PASS env var}"
 REMOTE_DIR="docker-swarm-stacks/nvidia-dgx-spark/cca"
 
 ssh_cmd() {

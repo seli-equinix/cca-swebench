@@ -18,8 +18,8 @@ Usage:
     python -m scripts.run_eval --no-eval
 
 Environment:
-    CCA_URL         CCA agent endpoint (default: http://192.168.4.205:8500)
-    PHOENIX_URL     Phoenix server (default: http://192.168.4.204:6006)
+    CCA_URL         CCA agent endpoint (default: http://localhost:8500)
+    PHOENIX_URL     Phoenix server (default: http://localhost:6006)
     DATASET_NAME    Phoenix dataset name (default: cca-agent-eval)
 """
 
@@ -38,8 +38,8 @@ import httpx
 
 # ==================== Configuration ====================
 
-DEFAULT_CCA_URL = "http://192.168.4.205:8500"
-DEFAULT_PHOENIX_URL = "http://192.168.4.204:6006"
+DEFAULT_CCA_URL = "http://localhost:8500"
+DEFAULT_PHOENIX_URL = "http://localhost:6006"
 DEFAULT_DATASET = "cca-agent-eval"
 CHAT_TIMEOUT = 180  # seconds per CCA call
 

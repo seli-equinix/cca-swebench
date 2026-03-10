@@ -4,9 +4,9 @@ Initializes a TracerProvider that exports spans to Phoenix via OTLP gRPC.
 Traces are routed to a named project (not "default") using the
 openinference.project.name resource attribute.
 
-Configuration via environment variables:
-    PHOENIX_COLLECTOR_ENDPOINT  (default: http://192.168.4.204:4317)
-    PHOENIX_PROJECT_NAME        (default: cca-http)
+Configuration (from config.toml [services], overridable via env vars):
+    PHOENIX_COLLECTOR_ENDPOINT  (empty = disabled)
+    PHOENIX_PROJECT_NAME        (default: cca)
 
 Usage in server startup:
     from confucius.core.tracing import init_tracing, shutdown_tracing
@@ -66,10 +66,17 @@ def init_tracing() -> Optional[trace.Tracer]:
     """
     global _provider
 
-    endpoint = os.environ.get(
-        "PHOENIX_COLLECTOR_ENDPOINT", "http://192.168.4.204:4317"
-    )
-    project_name = os.environ.get("PHOENIX_PROJECT_NAME", "cca-http")
+    try:
+        from .config import get_services_config
+        svc = get_services_config()
+        default_endpoint = svc.phoenix_endpoint
+        default_project = svc.phoenix_project
+    except Exception:
+        default_endpoint = ""
+        default_project = "cca"
+
+    endpoint = os.environ.get("PHOENIX_COLLECTOR_ENDPOINT") or default_endpoint
+    project_name = os.environ.get("PHOENIX_PROJECT_NAME") or default_project
 
     # Allow disabling tracing entirely
     if os.environ.get("PHOENIX_TRACING_DISABLED", "").lower() in ("1", "true"):

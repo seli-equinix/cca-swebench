@@ -1,4 +1,6 @@
 # CCA (Confucius Code Agent) Configuration
+# Copy to config.toml and edit for your infrastructure.
+#
 # Switch between "cloud" and "local" provider sets per role.
 # Edit [active] section to toggle — no code changes needed.
 
@@ -7,42 +9,42 @@
 openai_model_prefixes = ["qwen", "/models/"]
 
 [active]
-coder = "local"             # "cloud" = Azure GPT-5.2, "local" = Spark2 Qwen3-35B
-note_taker = "local"        # "cloud" = Bedrock Claude Sonnet, "local" = Spark1 Qwen3-8B
-tool_orchestrator = "local" # 8B model for research tool iterations (CODER/INFRA routes)
+coder = "local"             # "cloud" = Azure GPT-5.2, "local" = local vLLM
+note_taker = "local"        # "cloud" = Bedrock Claude Sonnet, "local" = local vLLM
+tool_orchestrator = "local" # 8B model for research tool iterations
 planner = "local"           # optional — comment out to use hardcoded default
 reviewer = "local"          # optional — comment out to disable code review expert
 tester = "local"            # optional — comment out to disable test generator expert
-search = "local"            # 35B primary for SEARCH route (plans + evaluates + synthesizes)
-search_researcher = "local" # 35B researcher for SEARCH tool iterations (reads results, writes brief)
+search = "local"            # primary for SEARCH route
+search_researcher = "local" # researcher for SEARCH tool iterations
 
 # ──────────────────────────────────────────────
-# CLOUD PROVIDERS (original upstream defaults)
+# CLOUD PROVIDERS (example — edit for your cloud accounts)
 # ──────────────────────────────────────────────
 
 [providers.cloud.planner]
-model = "gpt-5.2"
+model = "gpt-4o"
 provider = "azure"
 initial_max_tokens = 4096
 temperature = 0.2
 thinking_budget = 16384
 
 [providers.cloud.reviewer]
-model = "gpt-5.2"
+model = "gpt-4o"
 provider = "azure"
 initial_max_tokens = 4096
 temperature = 0.1
 thinking_budget = 8192
 
 [providers.cloud.tester]
-model = "gpt-5.2"
+model = "gpt-4o"
 provider = "azure"
 initial_max_tokens = 4096
 temperature = 0.3
 thinking_budget = 8192
 
 [providers.cloud.coder]
-model = "gpt-5.2"
+model = "gpt-4o"
 provider = "azure"
 initial_max_tokens = 8192
 temperature = 0.3
@@ -61,13 +63,13 @@ cost_per_1m_input = 3.00
 cost_per_1m_output = 15.00
 
 # ──────────────────────────────────────────────
-# LOCAL PROVIDERS (Spark infrastructure)
+# LOCAL PROVIDERS (edit base_url for your vLLM endpoints)
 # ──────────────────────────────────────────────
 
 [providers.local.coder]
-model = "/models/Qwen3.5-35B-A3B-FP8"
+model = "/models/YOUR_MODEL_NAME"
 provider = "openai"
-base_url = "http://192.168.4.208:8000/v1"
+base_url = "http://YOUR_VLLM_HOST:8000/v1"
 api_key_env = "OPENAI_API_KEY"
 initial_max_tokens = 8192
 max_tokens = 16384
@@ -76,9 +78,9 @@ cost_per_1m_input = 0.0
 cost_per_1m_output = 0.0
 
 [providers.local.note_taker]
-model = "/models/Qwen3-8B-FP8"
+model = "/models/YOUR_SMALL_MODEL"
 provider = "openai"
-base_url = "http://192.168.4.205:8400/v1"
+base_url = "http://YOUR_NOTETAKER_HOST:8400/v1"
 api_key_env = "OPENAI_API_KEY"
 initial_max_tokens = 4096
 max_tokens = 8192
@@ -88,49 +90,45 @@ cost_per_1m_input = 0.0
 cost_per_1m_output = 0.0
 
 [providers.local.planner]
-model = "/models/Qwen3.5-35B-A3B-FP8"
+model = "/models/YOUR_MODEL_NAME"
 provider = "openai"
-base_url = "http://192.168.4.208:8000/v1"
+base_url = "http://YOUR_VLLM_HOST:8000/v1"
 api_key_env = "OPENAI_API_KEY"
 initial_max_tokens = 4096
 max_tokens = 8192
 temperature = 0.2
 
 [providers.local.reviewer]
-model = "/models/Qwen3.5-35B-A3B-FP8"
+model = "/models/YOUR_MODEL_NAME"
 provider = "openai"
-base_url = "http://192.168.4.208:8000/v1"
+base_url = "http://YOUR_VLLM_HOST:8000/v1"
 api_key_env = "OPENAI_API_KEY"
 initial_max_tokens = 4096
 max_tokens = 8192
 temperature = 0.1
 
 [providers.local.tool_orchestrator]
-model = "/models/Qwen3-8B-FP8"
+model = "/models/YOUR_SMALL_MODEL"
 provider = "openai"
-base_url = "http://192.168.4.205:8400/v1"
+base_url = "http://YOUR_NOTETAKER_HOST:8400/v1"
 api_key_env = "OPENAI_API_KEY"
 initial_max_tokens = 2048
 max_tokens = 2048
 temperature = 0.3
 
 [providers.local.tester]
-model = "/models/Qwen3.5-35B-A3B-FP8"
+model = "/models/YOUR_MODEL_NAME"
 provider = "openai"
-base_url = "http://192.168.4.208:8000/v1"
+base_url = "http://YOUR_VLLM_HOST:8000/v1"
 api_key_env = "OPENAI_API_KEY"
 initial_max_tokens = 4096
 max_tokens = 8192
 temperature = 0.3
 
 [providers.local.search]
-# Primary for SEARCH route: plans what to search, evaluates research brief, synthesizes final answer.
-# Lower temperature for focused, factual synthesis.
-# initial_max_tokens is large because Qwen3 extended thinking consumes tokens from this budget —
-# a 35B model may think for 8K-15K tokens before writing the response. 32K gives room for both.
-model = "/models/Qwen3.5-35B-A3B-FP8"
+model = "/models/YOUR_MODEL_NAME"
 provider = "openai"
-base_url = "http://192.168.4.208:8000/v1"
+base_url = "http://YOUR_VLLM_HOST:8000/v1"
 api_key_env = "OPENAI_API_KEY"
 initial_max_tokens = 32768
 max_tokens = 32768
@@ -139,12 +137,9 @@ cost_per_1m_input = 0.0
 cost_per_1m_output = 0.0
 
 [providers.local.search_researcher]
-# Research executor for SEARCH route: reads search results, fetches pages, writes Research Brief.
-# Slightly higher temperature for thorough, exploratory research. Same 35B model as search.
-# Future: point this at a dedicated larger model on new hardware without touching other profiles.
-model = "/models/Qwen3.5-35B-A3B-FP8"
+model = "/models/YOUR_MODEL_NAME"
 provider = "openai"
-base_url = "http://192.168.4.208:8000/v1"
+base_url = "http://YOUR_VLLM_HOST:8000/v1"
 api_key_env = "OPENAI_API_KEY"
 initial_max_tokens = 4096
 max_tokens = 8192
@@ -159,44 +154,41 @@ cost_per_1m_output = 0.0
 # env vars (REDIS_URL, QDRANT_URL, etc.) override when set.
 
 [services]
-redis_url = "redis://:Loveme-sex64@192.168.4.205:6379/0"
-qdrant_url = "http://192.168.4.205:6333"
-embedding_url = "http://192.168.4.205:8200"
-searxng_url = "http://192.168.4.205:8888"
-memgraph_host = "192.168.4.205"
+redis_url = "redis://:YOUR_REDIS_PASSWORD@localhost:6379/0"
+qdrant_url = "http://localhost:6333"
+embedding_url = "http://localhost:8200"
+searxng_url = "http://localhost:8888"
+memgraph_host = "localhost"
 memgraph_port = 7687
-phoenix_endpoint = "http://192.168.4.204:4317"
-phoenix_project = "cca-http"
-cors_origins = "http://192.168.4.204:6006,http://192.168.4.205:8500"
+phoenix_endpoint = ""                  # empty = tracing disabled
+phoenix_project = "cca"
+cors_origins = "*"
 
 # ──────────────────────────────────────────────
 # EXPERT ROUTER (Functionary)
 # ──────────────────────────────────────────────
-# Uses the small Functionary 8B model to classify incoming requests
+# Uses a small Functionary model to classify incoming requests
 # and route them to the appropriate CCA expert entry.
 
 [router]
 enabled = true
-url = "http://192.168.4.205:8001"     # Functionary on Spark1 (llama.cpp)
-timeout_ms = 10000                     # Classification timeout (generous for cold starts)
-fallback_entry = "coder"               # If classification fails, use this entry
-temperature = 0.1                      # Low temp for deterministic routing
+url = "http://localhost:8001"
+timeout_ms = 10000
+fallback_entry = "coder"
+temperature = 0.1
 
-# In-loop tool selection (Phase 2 — Functionary-based smart tool escalation)
+# In-loop tool selection (Functionary-based smart tool escalation)
 [tool_router]
 enabled = true
-url = "http://192.168.4.205:8001"
+url = "http://localhost:8001"
 timeout_ms = 10000
 temperature = 0.1
 
 # ──────────────────────────────────────────────
 # CODE INTELLIGENCE — Workspace Indexer
 # ──────────────────────────────────────────────
-# Paths to index when `index_workspace` is called without a specific path.
-# These directories are walked recursively for Python, Bash, PowerShell,
-# YAML, and Markdown files.
 
 [indexer]
-paths = ["/workspace", "/home/seli/docker-swarm-stacks"]
+paths = ["/workspace"]
 collection = "codebase_files"
 skip_dirs = [".git", "node_modules", "__pycache__", ".venv", "venv", "build", "dist"]

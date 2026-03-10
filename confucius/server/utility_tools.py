@@ -288,9 +288,9 @@ class UtilityToolsExtension(ToolUseExtension):
             query, n_results, category or "general",
         )
 
-        searxng_url = os.getenv(
-            "SEARXNG_URL", "http://192.168.4.205:8888"
-        )
+        from ..core.config import get_services_config
+        svc = get_services_config()
+        searxng_url = os.getenv("SEARXNG_URL") or svc.searxng_url
 
         params: dict[str, Any] = {
             "q": query,

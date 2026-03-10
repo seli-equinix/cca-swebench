@@ -134,7 +134,7 @@ class TestMemoryAccess:
             if memory_files:
                 import httpx
                 resp = httpx.get(
-                    f"http://192.168.4.205:8500/v1/sessions/{sid}/memory",
+                    f"{cca.base_url}/v1/sessions/{sid}/memory",
                     timeout=10,
                 )
                 assert resp.status_code == 200, (
@@ -195,7 +195,7 @@ class TestMemoryAccess:
             if memory_files:
                 import httpx
                 resp = httpx.get(
-                    f"http://192.168.4.205:8500/v1/sessions/{sid}/memory",
+                    f"{cca.base_url}/v1/sessions/{sid}/memory",
                     timeout=10,
                 )
                 assert resp.status_code == 200
@@ -255,7 +255,7 @@ class TestMemoryAccess:
             if memory_files:
                 import httpx
                 resp = httpx.get(
-                    f"http://192.168.4.205:8500/v1/sessions/{sid}/memory",
+                    f"{cca.base_url}/v1/sessions/{sid}/memory",
                     timeout=10,
                 )
                 assert resp.status_code == 200

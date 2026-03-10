@@ -15,9 +15,13 @@ Config format (TOML):
 
     [providers.local.note_taker]
     model = "/models/Qwen3-8B-FP8"
-    base_url = "http://192.168.4.205:8400/v1"
+    base_url = "http://localhost:8400/v1"
     initial_max_tokens = 4096
     temperature = 0.3
+
+    [services]
+    redis_url = "redis://localhost:6379/0"
+    qdrant_url = "http://localhost:6333"
 """
 from __future__ import annotations
 
@@ -145,11 +149,32 @@ class ProviderProfile(BaseModel):
         )
 
 
+class ServicesConfig(BaseModel):
+    """Infrastructure service endpoints — single source of truth.
+
+    All service URLs are configured here. Python code reads from this;
+    env vars (QDRANT_URL, REDIS_URL, etc.) override these when set.
+    """
+
+    redis_url: str = "redis://localhost:6379/0"
+    qdrant_url: str = "http://localhost:6333"
+    embedding_url: str = "http://localhost:8200"
+    searxng_url: str = "http://localhost:8888"
+    memgraph_host: str = "localhost"
+    memgraph_port: int = 7687
+    phoenix_endpoint: str = ""  # empty = disabled
+    phoenix_project: str = "cca"
+    cors_origins: str = "*"  # comma-separated
+
+    class Config:
+        extra = "ignore"
+
+
 class RouterConfig(BaseModel):
     """Expert router configuration (Functionary-based classification)."""
 
     enabled: bool = False
-    url: str = "http://192.168.4.205:8001"
+    url: str = "http://localhost:8001"
     timeout_ms: int = 10000
     fallback_entry: str = "coder"
     temperature: float = 0.1
@@ -167,7 +192,7 @@ class ToolRouterConfig(BaseModel):
     """
 
     enabled: bool = False
-    url: str = "http://192.168.4.205:8001"
+    url: str = "http://localhost:8001"
     timeout_ms: int = 10000
     temperature: float = 0.1
 
@@ -185,6 +210,7 @@ class CCAConfig(BaseModel):
     providers: dict[str, dict[str, ProviderProfile]] = Field(default_factory=dict)
     router: RouterConfig = Field(default_factory=RouterConfig)
     tool_router: ToolRouterConfig = Field(default_factory=ToolRouterConfig)
+    services: ServicesConfig = Field(default_factory=ServicesConfig)
 
     class Config:
         extra = "ignore"
@@ -318,3 +344,13 @@ def get_tool_router_config() -> ToolRouterConfig:
     """
     config = _load_config()
     return config.tool_router
+
+
+def get_services_config() -> ServicesConfig:
+    """Get infrastructure service endpoints from config.
+
+    Returns ServicesConfig with defaults if [services] section is missing.
+    Individual values can be overridden by env vars in calling code.
+    """
+    config = _load_config()
+    return config.services

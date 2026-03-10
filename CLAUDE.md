@@ -91,11 +91,37 @@ HTTP Mode (confucius --port 8500)
 
 ## Config System (TOML)
 
-All model selection is managed via `config.toml` (mounted at `/etc/cca/config.toml` in Docker).
+All configuration is managed via TOML files (mounted in Docker). Copy `*.example` files to get started:
 
-**Config file**: `nvidia-dgx-spark/cca/config.toml`
+| File | Purpose | Mounted At |
+|------|---------|------------|
+| `config.toml` | Models, providers, service URLs, router | `/etc/cca/config.toml` |
+| `infrastructure.toml` | Cluster topology for INFRA expert (optional) | `/etc/cca/infrastructure.toml` |
+| `.env` | Secrets and env var overrides | Docker env_file |
+
+**Setup**: `cp config.toml.example config.toml && cp infrastructure.toml.example infrastructure.toml && cp .env.example .env`
+
 **Loader**: `confucius/core/config.py` — pydantic-validated, lazy singleton, Python 3.12 `tomllib`
-**Access**: `get_llm_params("role")` returns `LLMParams` (synchronous, safe at module level)
+**Access**: `get_llm_params("role")` returns `LLMParams`, `get_services_config()` returns `ServicesConfig`
+
+### Service Endpoints (`[services]` section)
+
+All backend service URLs are configured in `config.toml [services]`. Env vars override when set:
+
+```toml
+[services]
+redis_url = "redis://:password@localhost:6379/0"
+qdrant_url = "http://localhost:6333"
+embedding_url = "http://localhost:8200"
+searxng_url = "http://localhost:8888"
+memgraph_host = "localhost"
+memgraph_port = 7687
+phoenix_endpoint = ""          # empty = tracing disabled
+phoenix_project = "cca"
+cors_origins = "*"
+```
+
+### LLM Provider Config
 
 ```toml
 # Top-level: model prefixes that route through OpenAILLMManager
@@ -109,18 +135,18 @@ reviewer = "local"
 tester = "local"
 
 [providers.local.coder]
-model = "/models/Qwen3-Next-80B-A3B-Thinking-FP8"
+model = "/models/YOUR_MODEL_NAME"
 provider = "openai"
-base_url = "http://192.168.4.208:8000/v1"
+base_url = "http://YOUR_VLLM_HOST:8000/v1"
 api_key_env = "OPENAI_API_KEY"
 initial_max_tokens = 8192
 max_tokens = 16384
 temperature = 0.3
 
 [providers.local.note_taker]
-model = "/models/Qwen3-8B-FP8"
+model = "/models/YOUR_SMALL_MODEL"
 provider = "openai"
-base_url = "http://192.168.4.205:8400/v1"
+base_url = "http://YOUR_NOTETAKER_HOST:8400/v1"
 temperature = 0.3
 ```
 
@@ -130,18 +156,18 @@ temperature = 0.3
 
 ## Agent-as-a-Model HTTP Endpoint
 
-CCA runs as a persistent HTTP server on **Spark1 port 8500**, accepting OpenAI-compatible `/v1/chat/completions` requests and running the full agent loop internally.
+CCA runs as a persistent HTTP server on **port 8500**, accepting OpenAI-compatible `/v1/chat/completions` requests and running the full agent loop internally.
 
 ### Service Info
 
 | Property | Value |
 |----------|-------|
-| **URL** | `http://192.168.4.205:8500` |
-| **Health** | `http://192.168.4.205:8500/health` |
-| **Container** | `cca` on Spark1 |
+| **URL** | `http://localhost:8500` (see `config.toml`) |
+| **Health** | `http://localhost:8500/health` |
+| **Container** | `cca` |
 | **Restart policy** | `unless-stopped` (survives reboots) |
-| **Underlying LLM** | Qwen3-Next-80B-A3B-Thinking-FP8 on Spark2:8000 |
-| **Model name in /v1/models** | Read from `config.toml` coder role (currently `/models/Qwen3-Next-80B-A3B-Thinking-FP8`) |
+| **Underlying LLM** | Configured in `config.toml` `[providers.local.coder]` |
+| **Model name in /v1/models** | Read from `config.toml` coder role |
 
 ### API Endpoints
 
@@ -159,23 +185,23 @@ CCA runs as a persistent HTTP server on **Spark1 port 8500**, accepting OpenAI-c
 
 ```bash
 # Health check
-curl http://192.168.4.205:8500/health
+curl http://localhost:8500/health
 
 # List models
-curl http://192.168.4.205:8500/v1/models
+curl http://localhost:8500/v1/models
 
 # Non-streaming chat
-curl -X POST http://192.168.4.205:8500/v1/chat/completions \
+curl -X POST http://localhost:8500/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"model":"any-name-works","messages":[{"role":"user","content":"What files are in /workspace?"}]}'
 
 # Streaming chat
-curl -X POST http://192.168.4.205:8500/v1/chat/completions \
+curl -X POST http://localhost:8500/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"model":"cca","messages":[{"role":"user","content":"Hello"}],"stream":true}'
 
 # User identification test
-curl -X POST http://192.168.4.205:8500/v1/chat/completions \
+curl -X POST http://localhost:8500/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "X-Session-Id: test-session" \
   -d '{"messages":[{"role":"user","content":"Hi, I'\''m Sean. What can you help me with?"}]}'
@@ -258,7 +284,7 @@ Incoming HTTP requests are classified by a small Functionary model (8B, Q4_0) ru
 | Property | Value |
 |----------|-------|
 | **Model** | `functionary-small-v3.2.Q4_0.gguf` (4.34GB) |
-| **Server** | llama.cpp `server-cuda` on Spark1 (192.168.4.205:8001), built from source for ARM64+CUDA SM121 |
+| **Server** | llama.cpp `server-cuda` on localhost:8001, built from source for CUDA |
 | **GPU** | GB10 SM121 |
 | **Template** | Custom Jinja from HuggingFace `meetkai/functionary-small-v3.2` |
 | **Config** | `config.toml` `[router]` section |
@@ -290,26 +316,26 @@ Incoming HTTP requests are classified by a small Functionary model (8B, Q4_0) ru
 ```toml
 [router]
 enabled = true
-url = "http://192.168.4.205:8001"
+url = "http://localhost:8001"    # See config.toml [router]
 timeout_ms = 10000
 fallback_entry = "coder"
 temperature = 0.1
 
-[tool_router]      # Phase 2 — in-loop tool selection (not yet enabled)
-enabled = false
+[tool_router]
+enabled = true
 ```
 
 ### Test Classification
 
 ```bash
 # Quick classification test (no agent loop)
-curl -X POST http://192.168.4.205:8500/route/test \
+curl -X POST http://localhost:8500/route/test \
   -H "Content-Type: application/json" \
   -d '{"message": "check docker swarm node status"}'
 
 # Expected: {"expert": "infrastructure", "task_summary": "...", ...}
 
-curl -X POST http://192.168.4.205:8500/route/test \
+curl -X POST http://localhost:8500/route/test \
   -H "Content-Type: application/json" \
   -d '{"message": "refactor the login handler in auth.py"}'
 
@@ -332,13 +358,13 @@ curl -X POST http://192.168.4.205:8500/route/test \
 
 Ported from the MCP server's user identification system. Shares infrastructure (Redis, Qdrant, Embedding server) so users identified in MCP are recognized in CCA.
 
-### Infrastructure (shared with MCP server)
+### Infrastructure (configured in config.toml [services])
 
-| Service | URL | Purpose |
-|---------|-----|---------|
-| Redis | `redis://192.168.4.205:6379` | Session storage, critical facts |
-| Qdrant | `http://192.168.4.205:6333` | User profiles (vector search) |
-| Embedding | `http://192.168.4.205:8200` | Semantic user matching (Qwen3-Embedding-8B) |
+| Service | Config Key | Purpose |
+|---------|-----------|---------|
+| Redis | `redis_url` | Session storage, critical facts |
+| Qdrant | `qdrant_url` | User profiles (vector search) |
+| Embedding | `embedding_url` | Semantic user matching |
 
 ### Smart Auto-Identification
 
@@ -440,9 +466,9 @@ Phoenix (Arize Phoenix v13.1.1) provides trace visualization for CCA agent debug
 
 | Property | Value |
 |----------|-------|
-| **Web UI** | `http://192.168.4.204:6006` |
-| **OTel gRPC** | `192.168.4.204:4317` (for Python instrumentors) |
-| **OTel HTTP** | `192.168.4.204:4318` (alternative) |
+| **Web UI** | See your Phoenix deployment |
+| **OTel gRPC** | `config.toml` `[services]` `phoenix_endpoint` |
+| **OTel HTTP** | Alternative: port 4318 on same host |
 | **Stack file** | `phoenix/phoenix-stack.yml` |
 | **Deploy** | `docker stack deploy -c phoenix/phoenix-stack.yml phoenix` |
 | **Database** | PostgreSQL 16 on GlusterFS (`/mnt/glusterfs/phoenix/postgres`) |
@@ -477,9 +503,9 @@ Traces are routed to named projects via the `openinference.project.name` resourc
 Set in `cca-compose.yml` for `cca`:
 ```yaml
 environment:
-  - PHOENIX_COLLECTOR_ENDPOINT=http://192.168.4.204:4317  # OTel gRPC endpoint
-  - PHOENIX_PROJECT_NAME=cca-http                          # Phoenix project name
-  - PHOENIX_TRACING_DISABLED=false                         # Set to "true" to disable
+  - PHOENIX_COLLECTOR_ENDPOINT=${PHOENIX_COLLECTOR_ENDPOINT:-}  # OTel gRPC endpoint (from .env or config.toml)
+  - PHOENIX_PROJECT_NAME=${PHOENIX_PROJECT_NAME:-}              # Phoenix project name
+  - PHOENIX_TRACING_DISABLED=false                              # Set to "true" to disable
 ```
 
 ---
@@ -537,15 +563,15 @@ docker compose -f cca-compose.yml --profile dev up -d cca-dev
 | `cca-dev` | HTTP server with source-mounted code | `dev` | 8500 | No |
 | `cca-swebench` | SWE-bench runner | `swebench` | — | No (run --rm) |
 
-### CCA Deployment (from node5)
+### CCA Deployment (remote host)
 
 ```bash
-# Full redeploy cycle
+# Full redeploy cycle (replace YOUR_HOST with your CCA host IP/hostname)
 cd nvidia-dgx-spark/cca && git add <files> && git commit -m "msg" && git push origin main
-cd /home/seli/docker-swarm-stacks && git add nvidia-dgx-spark/cca && git commit -m "update CCA submodule" && git push
-sshpass -p 'Loveme-sex64' ssh seli@192.168.4.205 "cd docker-swarm-stacks && git pull && git submodule update --init nvidia-dgx-spark/cca"
-sshpass -p 'Loveme-sex64' ssh seli@192.168.4.205 "cd docker-swarm-stacks/nvidia-dgx-spark/cca && docker compose -f cca-compose.yml build --no-cache cca && docker compose -f cca-compose.yml down cca && docker compose -f cca-compose.yml up -d cca"
-curl http://192.168.4.205:8500/health
+cd /path/to/docker-swarm-stacks && git add nvidia-dgx-spark/cca && git commit -m "update CCA submodule" && git push
+ssh user@YOUR_HOST "cd docker-swarm-stacks && git pull && git submodule update --init nvidia-dgx-spark/cca"
+ssh user@YOUR_HOST "cd docker-swarm-stacks/nvidia-dgx-spark/cca && docker compose -f cca-compose.yml build --no-cache cca && docker compose -f cca-compose.yml down cca && docker compose -f cca-compose.yml up -d cca"
+curl http://YOUR_HOST:8500/health
 ```
 
 ---
@@ -556,17 +582,19 @@ curl http://192.168.4.205:8500/health
 
 ```env
 OPENAI_API_KEY=dummy                              # or real key for cloud providers
-OPENAI_BASE_URL=http://192.168.4.208:8000/v1     # local vLLM on Spark2
 CCA_CONFIG_PATH=/etc/cca/config.toml              # TOML config (mounted in Docker)
 ```
 
-### HTTP Server Additional
+### Service URL Overrides (optional — reads from config.toml [services] by default)
 
 ```env
-REDIS_URL=redis://:Loveme-sex64@192.168.4.205:6379/0   # User sessions + facts
-QDRANT_URL=http://192.168.4.205:6333                     # User profiles
-EMBEDDING_URL=http://192.168.4.205:8200                  # Semantic matching
+# Uncomment to override config.toml values
+# REDIS_URL=redis://:password@localhost:6379/0
+# QDRANT_URL=http://localhost:6333
+# EMBEDDING_URL=http://localhost:8200
 ```
+
+See `.env.example` for the full list of available env vars.
 
 ### Optional (provider-specific)
 
@@ -575,7 +603,7 @@ AWS_REGION=us-east-1
 AWS_ACCESS_KEY_ID=...
 AWS_SECRET_ACCESS_KEY=...
 AWS_BEARER_TOKEN_BEDROCK=...
-CCA_WORKSPACE=/home/seli/code
+CCA_WORKSPACE=/path/to/your/code
 ```
 
 ---
@@ -611,32 +639,32 @@ docker compose -f cca-compose.yml --profile swebench run --rm cca-swebench
 
 ```bash
 # Health
-curl http://192.168.4.205:8500/health
+curl http://localhost:8500/health
 
 # Models
-curl http://192.168.4.205:8500/v1/models
+curl http://localhost:8500/v1/models
 
 # Chat (non-streaming)
-curl -X POST http://192.168.4.205:8500/v1/chat/completions \
+curl -X POST http://localhost:8500/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"messages":[{"role":"user","content":"List files in /workspace"}]}'
 
 # Chat (streaming)
-curl -X POST http://192.168.4.205:8500/v1/chat/completions \
+curl -X POST http://localhost:8500/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"messages":[{"role":"user","content":"Hello"}],"stream":true}'
 
 # User identification
-curl -X POST http://192.168.4.205:8500/v1/chat/completions \
+curl -X POST http://localhost:8500/v1/chat/completions \
   -H "X-Session-Id: test-session" \
   -H "Content-Type: application/json" \
   -d '{"messages":[{"role":"user","content":"Hi, I'\''m Sean"}]}'
 
 # Active sessions
-curl http://192.168.4.205:8500/sessions
+curl http://localhost:8500/sessions
 
 # Known users
-curl http://192.168.4.205:8500/users
+curl http://localhost:8500/users
 ```
 
 ---

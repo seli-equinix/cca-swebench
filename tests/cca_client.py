@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 import uuid
 from typing import Any, Dict, List, Optional
@@ -108,7 +109,7 @@ class CCAClient:
 
     def __init__(
         self,
-        base_url: str = "http://192.168.4.205:8500",
+        base_url: str = os.getenv("CCA_BASE_URL", "http://localhost:8500"),
         tracer: Optional[trace.Tracer] = None,
         idle_timeout: float = TIMEOUT_IDLE,
     ) -> None:

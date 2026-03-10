@@ -141,9 +141,7 @@ async def lifespan(app: FastAPI):  # type: ignore[type-arg]
     # Initialise note observer (per-request note extraction → Qdrant)
     try:
         nt_params = get_llm_params("note_taker")
-        base_url = (nt_params.additional_kwargs or {}).get(
-            "base_url", "http://192.168.4.205:8400/v1"
-        )
+        base_url = (nt_params.additional_kwargs or {}).get("base_url", "")
         note_observer = NoteObserver(
             llm_url=base_url,
             llm_model=nt_params.model or "",
@@ -239,10 +237,17 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-_CORS_ORIGINS = os.getenv(
-    "CCA_CORS_ORIGINS",
-    "http://192.168.4.204:6006,http://192.168.4.205:8500",
-).split(",")
+def _get_cors_origins() -> list[str]:
+    env = os.getenv("CCA_CORS_ORIGINS")
+    if env:
+        return env.split(",")
+    try:
+        from ..core.config import get_services_config
+        return get_services_config().cors_origins.split(",")
+    except Exception:
+        return ["*"]
+
+_CORS_ORIGINS = _get_cors_origins()
 
 app.add_middleware(
     CORSMiddleware,

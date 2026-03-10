@@ -169,10 +169,10 @@ cd /home/seli/docker-swarm-stacks
 git add nvidia-dgx-spark/cca && git commit -m "update CCA submodule" && git push
 
 # 3. Pull on Spark1
-sshpass -p 'Loveme-sex64' ssh seli@192.168.4.205 "cd docker-swarm-stacks && git pull && git submodule update --init nvidia-dgx-spark/cca"
+sshpass -p "$CCA_DEPLOY_PASS" ssh user@CCA_HOST "cd docker-swarm-stacks && git pull && git submodule update --init nvidia-dgx-spark/cca"
 
 # 4. Build and restart
-sshpass -p 'Loveme-sex64' ssh seli@192.168.4.205 "cd docker-swarm-stacks/nvidia-dgx-spark/cca && docker compose -f cca-compose.yml build cca-http && docker compose -f cca-compose.yml up -d cca-http"
+sshpass -p "$CCA_DEPLOY_PASS" ssh user@CCA_HOST "cd docker-swarm-stacks/nvidia-dgx-spark/cca && docker compose -f cca-compose.yml build cca-http && docker compose -f cca-compose.yml up -d cca-http"
 
 # 5. Verify
 curl http://192.168.4.205:8500/health

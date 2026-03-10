@@ -7,11 +7,8 @@ Provides a singleton client layer for Qdrant, Memgraph, Redis, and the
 embedding server.  Initialised once in app.py lifespan, then injected
 into extensions via build_extensions_for_route().
 
-Infrastructure (all on Spark1 unless noted):
-- Qdrant:     192.168.4.205:6333  (vector search)
-- Embedding:  192.168.4.205:8200  (Qwen3-Embedding-8B, 4096 dims)
-- Redis:      192.168.4.205:6379  (session data, reused from UserSessionManager)
-- Memgraph:   192.168.4.205:7687  (code knowledge graph)
+All service URLs come from config.toml [services] section.
+Env vars (QDRANT_URL, EMBEDDING_URL, etc.) override when set.
 """
 
 from __future__ import annotations
@@ -20,12 +17,9 @@ import logging
 import os
 from typing import Any, List, Optional
 
-logger = logging.getLogger(__name__)
+from ..core.config import get_services_config
 
-DEFAULT_QDRANT_URL: str = os.getenv("QDRANT_URL", "http://192.168.4.205:6333")
-DEFAULT_EMBEDDING_URL: str = os.getenv("EMBEDDING_URL", "http://192.168.4.205:8200")
-DEFAULT_MEMGRAPH_HOST: str = os.getenv("MEMGRAPH_HOST", "192.168.4.205")
-DEFAULT_MEMGRAPH_PORT: int = int(os.getenv("MEMGRAPH_PORT", "7687"))
+logger = logging.getLogger(__name__)
 
 EMBEDDING_DIMS: int = 4096
 EMBEDDING_BATCH_SIZE: int = 10
@@ -42,11 +36,16 @@ class BackendClients:
     def __init__(
         self,
         *,
-        qdrant_url: str = DEFAULT_QDRANT_URL,
-        embedding_url: str = DEFAULT_EMBEDDING_URL,
-        memgraph_host: str = DEFAULT_MEMGRAPH_HOST,
-        memgraph_port: int = DEFAULT_MEMGRAPH_PORT,
+        qdrant_url: str | None = None,
+        embedding_url: str | None = None,
+        memgraph_host: str | None = None,
+        memgraph_port: int | None = None,
     ) -> None:
+        svc = get_services_config()
+        qdrant_url = qdrant_url or os.getenv("QDRANT_URL") or svc.qdrant_url
+        embedding_url = embedding_url or os.getenv("EMBEDDING_URL") or svc.embedding_url
+        memgraph_host = memgraph_host or os.getenv("MEMGRAPH_HOST") or svc.memgraph_host
+        memgraph_port = memgraph_port or int(os.getenv("MEMGRAPH_PORT", "0") or 0) or svc.memgraph_port
         self._qdrant_url = qdrant_url
         self._embedding_url = embedding_url.rstrip("/")
         self._memgraph_host = memgraph_host

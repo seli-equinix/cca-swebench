@@ -4,8 +4,7 @@ All traces go to a single Phoenix project (cca-http) so each request
 shows as ONE unified trace with all steps: routing → agent → tool calls.
 Tests are categorized via span attributes, not separate projects.
 
-Every test creates spans visible in the Phoenix UI at
-http://192.168.4.204:6006/.
+Every test creates spans visible in the Phoenix UI (set PHOENIX_URL env var).
 
 Annotations are deferred until AFTER the span is closed and flushed to
 Phoenix. This avoids 404 errors caused by posting annotations for spans
@@ -41,8 +40,8 @@ log = logging.getLogger(__name__)
 
 # ==================== Configuration ====================
 
-PHOENIX_ENDPOINT = "http://192.168.4.204:4317"
-CCA_BASE_URL = "http://192.168.4.205:8500"
+PHOENIX_ENDPOINT = os.getenv("PHOENIX_COLLECTOR_ENDPOINT", "http://localhost:4317")
+CCA_BASE_URL = os.getenv("CCA_BASE_URL", "http://localhost:8500")
 
 # Same Phoenix project as the CCA server — test + server spans unified
 PROJECT_NAME = "cca-http"
@@ -248,7 +247,7 @@ def pytest_runtest_makereport(item, call):
 # ==================== LLM Judge (direct vLLM, NOT CCA) ====================
 
 
-VLLM_BASE_URL = "http://192.168.4.208:8000/v1"
+VLLM_BASE_URL = os.getenv("VLLM_BASE_URL", "http://localhost:8000/v1")
 VLLM_MODEL = "/models/Qwen3.5-35B-A3B-FP8"
 
 

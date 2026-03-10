@@ -18,6 +18,7 @@ Usage in tests:
 from __future__ import annotations
 
 import logging
+import os
 import re
 from typing import Any, Dict, List, Optional
 
@@ -35,7 +36,7 @@ SCORE_FAIL = 0.0
 _EVAL_QUEUE: list[dict] = []
 _TURN_COUNTERS: dict[str, int] = {}
 
-PHOENIX_URL = "http://192.168.4.204:6006"
+PHOENIX_URL = os.getenv("PHOENIX_URL", "http://localhost:6006")
 
 # Lazy singleton for Phoenix client
 _phoenix_client = None
@@ -47,7 +48,7 @@ def _get_phoenix_client():
     if _phoenix_client is None:
         try:
             from phoenix.client import Client
-            _phoenix_client = Client(base_url="http://192.168.4.204:6006")
+            _phoenix_client = Client(base_url=PHOENIX_URL)
         except Exception as e:
             log.warning("Could not create Phoenix client: %s", e)
     return _phoenix_client
