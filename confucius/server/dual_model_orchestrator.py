@@ -955,19 +955,19 @@ class DualModelOrchestrator(AnthropicLLMOrchestrator):
                 and self._requires_tool_use
             ):
                 # Post-error recovery: if a tool failed and the model
-                # described what it would have done instead of retrying,
-                # nudge it to try a different approach before synthesizing.
-                described = self._extract_described_tool_call(context)
+                # stopped retrying (either described a command as text
+                # or just gave up with a plain text response), nudge it
+                # to try again with a different approach.
                 if (
                     self._total_consecutive_errors > 0
-                    and described is not None
                     and not self._post_error_nudge_done
                 ):
                     self._post_error_nudge_done = True
-                    if described.tool == "bash":
+                    described = self._extract_described_tool_call(context)
+
+                    if described and described.tool == "bash":
                         recovery_msg = (
-                            "Your previous bash command failed and you "
-                            "described the command instead of retrying. "
+                            "Your previous bash command failed. "
                             "Try a different approach:\n"
                             "- Use `str_replace_editor` with command="
                             "'create' to write file content (instead of "
@@ -975,17 +975,30 @@ class DualModelOrchestrator(AnthropicLLMOrchestrator):
                             "- Or simplify the bash command (avoid "
                             "heredocs, use echo with redirect instead)"
                         )
-                    else:
+                    elif described:
                         recovery_msg = (
                             f"Your previous `{described.tool}` call "
-                            f"failed and you described what you would "
-                            f"have done instead of retrying. Please try "
-                            f"again with a different approach."
+                            f"failed. Please try again with a different "
+                            f"approach."
                         )
+                    else:
+                        # Model gave up with plain text after tool failure
+                        recovery_msg = (
+                            "Your previous tool call failed but the task "
+                            "is not complete. Don't give up — retry using "
+                            "a different approach:\n"
+                            "- For file creation: use `str_replace_editor` "
+                            "with command='create'\n"
+                            "- For commands: use the `bash` tool with a "
+                            "simpler command (avoid heredocs)\n"
+                            "- Verify your work after each step"
+                        )
+
                     logger.info(
-                        "Dual-model: post-error described %s call "
-                        "— nudging to retry with different approach",
-                        described.tool,
+                        "Dual-model: post-error recovery — nudging to "
+                        "retry (described=%s, errors=%d)",
+                        described.tool if described else "none",
+                        self._total_consecutive_errors,
                     )
                     context.memory_manager.add_messages([
                         CfMessage(
