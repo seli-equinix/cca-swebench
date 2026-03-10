@@ -38,6 +38,8 @@ Stall detection:
 from __future__ import annotations
 
 import logging
+import re
+from typing import NamedTuple
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import BaseMessage
@@ -87,6 +89,34 @@ ABSOLUTE_MAX_ITERATIONS = 200
 # After this many cycles, a "stop researching" message is injected.
 # This is a backstop — the 80B's thinking should decide when to stop naturally.
 MAX_RESEARCH_CYCLES = 8
+
+# ---------------------------------------------------------------------------
+# Described-tool-call detection: catches when the LLM describes a tool call
+# as markdown text instead of making the actual tool call.
+# ---------------------------------------------------------------------------
+
+class DescribedToolCall(NamedTuple):
+    """A tool call the model described in text instead of actually calling."""
+    tool: str           # "bash" or "str_replace_editor"
+    content: str        # The code/command the model wrote
+    language: str       # The code block language tag
+
+# Code block languages that map to the bash tool
+_SHELL_LANGS = frozenset({
+    "bash", "sh", "shell", "console", "zsh", "fish",
+    "cmd", "powershell",
+})
+
+# Regex: capture language tag and content of fenced code blocks
+_CODE_BLOCK_RE = re.compile(r"```(\w*)\n(.*?)```", re.DOTALL)
+
+# Shell command prefixes — used to detect unlabelled code blocks that
+# contain shell commands (the model sometimes omits the language tag).
+_SHELL_CMD_PREFIXES = (
+    "cat ", "echo ", "sshpass ", "docker ", "curl ", "mkdir ",
+    "rm ", "cp ", "mv ", "ls ", "cd ", "pip ", "python ",
+    "apt ", "sudo ", "chmod ", "chown ", "grep ", "sed ",
+)
 
 # Tools that only READ data — safe for the 8B to orchestrate.
 # Any tool NOT in this set triggers 80B on the next iteration.
@@ -140,6 +170,9 @@ class DualModelOrchestrator(AnthropicLLMOrchestrator):
     _synthesis_done: bool = PrivateAttr(default=False)
     # Tool-nudge: re-prompt once if model describes intent but doesn't call tools
     _tool_nudge_done: bool = PrivateAttr(default=False)
+    # Post-error nudge: after a tool failure, if model describes what it would
+    # have done instead of retrying, nudge once to try a different approach
+    _post_error_nudge_done: bool = PrivateAttr(default=False)
     # Global error circuit breaker (works for 80B too, not just 8B→80B)
     _total_consecutive_errors: int = PrivateAttr(default=0)
     _error_hint_injected: bool = PrivateAttr(default=False)
@@ -859,19 +892,57 @@ class DualModelOrchestrator(AnthropicLLMOrchestrator):
                             ])
                             continue
 
-                    logger.info(
-                        "Dual-model: no tools called after %d iterations "
-                        "— nudging model to use tools",
-                        self._num_iterations,
-                    )
+                    # Build a corrective nudge: extract what the model
+                    # described and tell it exactly which tool to use.
+                    described = self._extract_described_tool_call(context)
+
+                    if described and described.tool == "bash":
+                        cmd_preview = described.content[:200]
+                        if len(described.content) > 200:
+                            cmd_preview += "..."
+                        nudge_msg = (
+                            f"You wrote a {described.language} command in "
+                            f"your response but didn't call the bash tool "
+                            f"to execute it. Call the `bash` tool now with "
+                            f"this command:\n```\n{cmd_preview}\n```\n"
+                            f"If the command uses heredoc syntax (<<), "
+                            f"prefer using `str_replace_editor` with "
+                            f"command='create' instead — heredocs can fail "
+                            f"in the execution environment."
+                        )
+                        logger.info(
+                            "Dual-model: detected described bash call "
+                            "— corrective nudge",
+                        )
+                    elif described and described.tool == "str_replace_editor":
+                        nudge_msg = (
+                            "You wrote code in your response but didn't "
+                            "use the str_replace_editor tool to create "
+                            "the file. Call `str_replace_editor` now with "
+                            "command='create', set the path, and paste "
+                            "the code as file_text."
+                        )
+                        logger.info(
+                            "Dual-model: detected described "
+                            "str_replace_editor call — corrective nudge",
+                        )
+                    else:
+                        nudge_msg = (
+                            "You have tools available to perform this "
+                            "action. Don't just describe what you'll "
+                            "do — call the appropriate tool to actually "
+                            "execute it now."
+                        )
+                        logger.info(
+                            "Dual-model: no tools called after %d "
+                            "iterations — generic nudge",
+                            self._num_iterations,
+                        )
+
                     context.memory_manager.add_messages([
                         CfMessage(
                             type=cf.MessageType.HUMAN,
-                            content=(
-                                "You have tools available to perform this action. "
-                                "Don't just describe what you'll do — call the "
-                                "appropriate tool to actually execute it now."
-                            ),
+                            content=nudge_msg,
                             additional_kwargs={"__synthetic__": True},
                         )
                     ])
@@ -883,6 +954,48 @@ class DualModelOrchestrator(AnthropicLLMOrchestrator):
                 and self._research_cycle_count == 0
                 and self._requires_tool_use
             ):
+                # Post-error recovery: if a tool failed and the model
+                # described what it would have done instead of retrying,
+                # nudge it to try a different approach before synthesizing.
+                described = self._extract_described_tool_call(context)
+                if (
+                    self._total_consecutive_errors > 0
+                    and described is not None
+                    and not self._post_error_nudge_done
+                ):
+                    self._post_error_nudge_done = True
+                    if described.tool == "bash":
+                        recovery_msg = (
+                            "Your previous bash command failed and you "
+                            "described the command instead of retrying. "
+                            "Try a different approach:\n"
+                            "- Use `str_replace_editor` with command="
+                            "'create' to write file content (instead of "
+                            "bash cat/heredoc)\n"
+                            "- Or simplify the bash command (avoid "
+                            "heredocs, use echo with redirect instead)"
+                        )
+                    else:
+                        recovery_msg = (
+                            f"Your previous `{described.tool}` call "
+                            f"failed and you described what you would "
+                            f"have done instead of retrying. Please try "
+                            f"again with a different approach."
+                        )
+                    logger.info(
+                        "Dual-model: post-error described %s call "
+                        "— nudging to retry with different approach",
+                        described.tool,
+                    )
+                    context.memory_manager.add_messages([
+                        CfMessage(
+                            type=cf.MessageType.HUMAN,
+                            content=recovery_msg,
+                            additional_kwargs={"__synthetic__": True},
+                        )
+                    ])
+                    continue
+
                 # 80B produced text after tool work (coding/non-research routes).
                 # Normally its response was an internal working draft — force one
                 # more iteration to produce a single, clean, consolidated answer.
@@ -1052,20 +1165,84 @@ class DualModelOrchestrator(AnthropicLLMOrchestrator):
         # Quality gate: check for errors after processing (8B→80B)
         self._update_quality_gate()
 
-    def _last_assistant_has_code(self, context: AnalectRunContext) -> bool:
-        """Check if the last assistant message already contains code."""
+    def _extract_described_tool_call(
+        self, context: AnalectRunContext,
+    ) -> DescribedToolCall | None:
+        """Extract a tool call the model described in text but didn't execute.
+
+        Parses the last AI message for fenced code blocks and maps them to
+        the tool the model intended to call.  Returns None if the response
+        doesn't contain a described tool call.
+        """
         for msg in reversed(context.memory_manager.memory.messages):
-            if msg.type == cf.MessageType.AI:
-                text = msg.content if isinstance(msg.content, str) else ""
-                if not text:
+            if msg.type != cf.MessageType.AI:
+                continue
+            text = msg.content if isinstance(msg.content, str) else ""
+            if not text:
+                continue
+
+            matches = _CODE_BLOCK_RE.findall(text)
+            if not matches:
+                return None
+
+            for lang, content in matches:
+                lang_lower = lang.lower() if lang else ""
+                content = content.strip()
+                if not content:
                     continue
-                if "```" in text:
-                    return True
-                code_patterns = [
-                    "def ", "class ", "import ", "from ", "lambda ",
-                    "print(", "return ", "async def ", "await ",
-                ]
-                return any(p in text for p in code_patterns)
+
+                # Shell code block → model wanted to call bash tool
+                if lang_lower in _SHELL_LANGS or (
+                    not lang_lower
+                    and content.startswith(_SHELL_CMD_PREFIXES)
+                ):
+                    return DescribedToolCall(
+                        tool="bash",
+                        content=content,
+                        language=lang_lower or "bash",
+                    )
+
+                # Python code block with file creation context →
+                # model wanted to call str_replace_editor
+                if lang_lower in ("python", "py") and any(
+                    kw in text.lower()
+                    for kw in ("create", "file called", "write a", "save")
+                ):
+                    return DescribedToolCall(
+                        tool="str_replace_editor",
+                        content=content,
+                        language=lang_lower,
+                    )
+
+            return None
+        return None
+
+    def _last_assistant_has_code(self, context: AnalectRunContext) -> bool:
+        """Check if the last assistant message contains usable inline code.
+
+        Returns True for genuine code answers (function definitions, etc.)
+        that DON'T need tool execution.  Returns False when the model
+        described a tool call it should have made — so the nudge fires.
+        """
+        # If the model described a tool call, that's NOT usable inline code
+        if self._extract_described_tool_call(context) is not None:
+            return False
+
+        # Otherwise, check for genuine inline code patterns
+        for msg in reversed(context.memory_manager.memory.messages):
+            if msg.type != cf.MessageType.AI:
+                continue
+            text = msg.content if isinstance(msg.content, str) else ""
+            if not text:
+                continue
+
+            if "```" in text:
+                return True
+            code_patterns = [
+                "def ", "class ", "import ", "from ", "lambda ",
+                "print(", "return ", "async def ", "await ",
+            ]
+            return any(p in text for p in code_patterns)
         return False
 
     def _update_quality_gate(self) -> None:
