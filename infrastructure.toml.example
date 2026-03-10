@@ -9,11 +9,14 @@
 
 [ssh]
 user = "your-ssh-user"
-# Password: set CCA_SSH_PASSWORD env var (never stored in config files)
+password_env = "CCA_SSH_PASSWORD"   # env var name (not the password itself)
 
 # ──────────────────────────────────────────────
 # DOCKER SWARM NODES (optional)
 # ──────────────────────────────────────────────
+# Per-node credential overrides (optional):
+#   ssh_user        — override [ssh].user for this node
+#   ssh_password_env — env var name for this node's password (overrides [ssh].password_env)
 
 # [[swarm_nodes]]
 # name = "manager1"
@@ -23,6 +26,8 @@ user = "your-ssh-user"
 # cpu = "Xeon Gold 6248, 40T"
 # ram = "128GB"
 # gpu = ""
+# ssh_user = "admin"                 # optional per-node override
+# ssh_password_env = "SSH_PASS_MGR1" # optional per-node override
 #
 # [[swarm_nodes]]
 # name = "worker1"
@@ -41,11 +46,13 @@ user = "your-ssh-user"
 # name = "gpu-node-1"
 # ip = "10.0.0.10"
 # purpose = "CCA, Redis, Qdrant, Embedding"
+# ssh_password_env = "SSH_PASS_GPU1" # optional per-node override
 #
 # [[standalone_nodes]]
 # name = "gpu-node-2"
 # ip = "10.0.0.11"
 # purpose = "vLLM inference"
+# ssh_password_env = "SSH_PASS_GPU2" # optional per-node override
 
 # ──────────────────────────────────────────────
 # LOCAL SERVICES (on the CCA host node)

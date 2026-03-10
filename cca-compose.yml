@@ -36,7 +36,7 @@ services:
       - MEMGRAPH_PORT=${MEMGRAPH_PORT:-}
       - PHOENIX_COLLECTOR_ENDPOINT=${PHOENIX_COLLECTOR_ENDPOINT:-}
       - PHOENIX_PROJECT_NAME=${PHOENIX_PROJECT_NAME:-}
-      # INFRA expert SSH + topology
+      # INFRA expert SSH credentials (global default; per-node overrides load from .env automatically)
       - CCA_SSH_PASSWORD=${CCA_SSH_PASSWORD:-}
       - CCA_INFRA_CONFIG_PATH=/etc/cca/infrastructure.toml
     # Host networking: CCA accesses all co-located services via localhost.
@@ -85,6 +85,7 @@ services:
       - MEMGRAPH_PORT=${MEMGRAPH_PORT:-}
       - PHOENIX_COLLECTOR_ENDPOINT=${PHOENIX_COLLECTOR_ENDPOINT:-}
       - PHOENIX_PROJECT_NAME=${PHOENIX_PROJECT_NAME:-}
+      # INFRA expert SSH credentials (global default; per-node overrides load from .env automatically)
       - CCA_SSH_PASSWORD=${CCA_SSH_PASSWORD:-}
       - CCA_INFRA_CONFIG_PATH=/etc/cca/infrastructure.toml
     network_mode: host

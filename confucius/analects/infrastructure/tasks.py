@@ -5,7 +5,7 @@
 Builds the prompt dynamically from:
   1. infrastructure.toml  — cluster topology (nodes, containers, checks)
   2. config.toml [services] — service endpoints (Redis URL, Qdrant URL, etc.)
-  3. CCA_SSH_PASSWORD env var — SSH credentials (never stored in files)
+  3. Per-node SSH credentials via env var references in infrastructure.toml
 
 No hardcoded IPs, passwords, or infrastructure details in this file.
 """
@@ -66,6 +66,21 @@ def _extract_redis_password(redis_url: str) -> str:
         return parsed.password or ""
     except Exception:
         return ""
+
+
+def _get_node_ssh_creds(node: dict[str, Any], infra: dict[str, Any]) -> tuple[str, str]:
+    """Return (ssh_user, ssh_password) for a node, with global [ssh] fallback.
+
+    Credential resolution order:
+      1. Node-specific ``ssh_user`` / ``ssh_password_env`` fields
+      2. Global ``[ssh].user`` / ``[ssh].password_env``
+      3. Hardcoded defaults: user="user", password_env="CCA_SSH_PASSWORD"
+    """
+    global_ssh = infra.get("ssh", {})
+    user = node.get("ssh_user") or global_ssh.get("user", "user")
+    pass_env = node.get("ssh_password_env") or global_ssh.get("password_env", "CCA_SSH_PASSWORD")
+    password = os.environ.get(pass_env, "")
+    return user, password
 
 
 # ---------------------------------------------------------------------------
@@ -169,25 +184,56 @@ def _build_swarm_services_section(infra: dict[str, Any]) -> str:
     return f"### Key Swarm Services\n{desc}"
 
 
-def _build_ssh_section(infra: dict[str, Any], ssh_password: str) -> str:
-    """Build the SSH access section."""
-    ssh_cfg = infra.get("ssh", {})
-    user = ssh_cfg.get("user", "user")
-    if ssh_password:
+def _build_ssh_section(infra: dict[str, Any]) -> str:
+    """Build the SSH access section with per-node credentials."""
+    all_nodes = list(infra.get("swarm_nodes", [])) + list(infra.get("standalone_nodes", []))
+    if not all_nodes:
+        return ""
+
+    # Collect unique (user, password) pairs to decide format
+    creds_by_node: list[tuple[str, str, str]] = []  # (name, user, password)
+    unique_creds: set[tuple[str, str]] = set()
+    for node in all_nodes:
+        user, password = _get_node_ssh_creds(node, infra)
+        creds_by_node.append((node.get("name", "?"), user, password))
+        unique_creds.add((user, password))
+
+    # If all nodes share the same creds, show a single generic command
+    if len(unique_creds) == 1:
+        user, password = next(iter(unique_creds))
+        if password:
+            return (
+                "### SSH Access to Remote Nodes\n"
+                "```bash\n"
+                f"sshpass -p '{password}' ssh -o StrictHostKeyChecking=no "
+                f"{user}@<IP> \"command\"\n"
+                "```"
+            )
         return (
-            "### SSH Access to Standalone Nodes\n"
+            "### SSH Access to Remote Nodes\n"
             "```bash\n"
-            f"sshpass -p '{ssh_password}' ssh -o StrictHostKeyChecking=no "
-            f"{user}@<IP> \"command\"\n"
-            "```"
+            f"ssh -o StrictHostKeyChecking=no {user}@<IP> \"command\"\n"
+            "```\n"
+            "_Note: Set CCA_SSH_PASSWORD env var (or per-node ssh_password_env) "
+            "for password-based SSH via sshpass._"
         )
-    return (
-        "### SSH Access to Standalone Nodes\n"
-        "```bash\n"
-        f"ssh -o StrictHostKeyChecking=no {user}@<IP> \"command\"\n"
-        "```\n"
-        "_Note: Set CCA_SSH_PASSWORD env var for password-based SSH via sshpass._"
-    )
+
+    # Different creds per node — show per-node SSH commands
+    lines = ["### SSH Access to Remote Nodes", ""]
+    for name, user, password in creds_by_node:
+        if password:
+            lines.append(
+                f"- **{name}**: "
+                f"`sshpass -p '{password}' ssh -o StrictHostKeyChecking=no "
+                f"{user}@<IP> \"command\"`"
+            )
+        else:
+            lines.append(
+                f"- **{name}**: "
+                f"`ssh -o StrictHostKeyChecking=no {user}@<IP> \"command\"` "
+                "_(no password configured)_"
+            )
+    return "\n".join(lines)
 
 
 def get_infra_task_definition(current_time: str) -> str:
@@ -215,7 +261,6 @@ def get_infra_task_definition(current_time: str) -> str:
 
     # Extract values
     redis_password = _extract_redis_password(svc.redis_url)
-    ssh_password = os.environ.get("CCA_SSH_PASSWORD", "")
     memgraph_host = os.environ.get("MEMGRAPH_HOST") or svc.memgraph_host
     memgraph_port = int(os.environ.get("MEMGRAPH_PORT", "0") or 0) or svc.memgraph_port
 
@@ -283,19 +328,23 @@ def get_infra_task_definition(current_time: str) -> str:
         "- `systemctl` is NOT available (no systemd in container). Use `docker ps`/`docker logs` instead.",
     ])
 
-    # GPU check via SSH (if we have standalone nodes and SSH password)
-    gpu_nodes = [n for n in infra.get("standalone_nodes", []) if n.get("purpose", "").lower().find("vllm") >= 0 or n.get("purpose", "").lower().find("gpu") >= 0]
-    if gpu_nodes and ssh_password:
-        ssh_user = infra.get("ssh", {}).get("user", "user")
-        n = gpu_nodes[0]
-        sections.append(
-            f"- For GPU status on remote nodes: "
-            f"`sshpass -p '{ssh_password}' ssh {ssh_user}@{n['ip']} nvidia-smi`"
-        )
+    # GPU check via SSH (per-node credentials)
+    gpu_nodes = [
+        n for n in infra.get("standalone_nodes", [])
+        if "vllm" in n.get("purpose", "").lower()
+        or "gpu" in n.get("purpose", "").lower()
+    ]
+    for n in gpu_nodes:
+        ssh_user, ssh_pass = _get_node_ssh_creds(n, infra)
+        if ssh_pass:
+            sections.append(
+                f"- GPU status on {n.get('name', n['ip'])}: "
+                f"`sshpass -p '{ssh_pass}' ssh {ssh_user}@{n['ip']} nvidia-smi`"
+            )
     sections.append("")
 
     # SSH section
-    ssh_section = _build_ssh_section(infra, ssh_password)
+    ssh_section = _build_ssh_section(infra)
     sections.append(ssh_section)
     sections.append("")
 
