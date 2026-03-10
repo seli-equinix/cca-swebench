@@ -84,6 +84,46 @@ def _get_node_ssh_creds(node: dict[str, Any], infra: dict[str, Any]) -> tuple[st
 
 
 # ---------------------------------------------------------------------------
+# Docker access resolution
+# ---------------------------------------------------------------------------
+
+
+def _resolve_docker_access(
+    infra: dict[str, Any],
+) -> dict[str, tuple[dict[str, Any], str, str] | None]:
+    """Resolve docker_access node names to full node dicts with SSH creds.
+
+    Returns dict with keys:
+      - local: (node_dict, ssh_user, ssh_pass) or None
+      - swarm: (node_dict, ssh_user, ssh_pass) or None
+    """
+    access = infra.get("docker_access", {})
+    all_nodes = {
+        n["name"]: n
+        for n in infra.get("swarm_nodes", []) + infra.get("standalone_nodes", [])
+    }
+
+    result: dict[str, tuple[dict[str, Any], str, str] | None] = {
+        "local": None,
+        "swarm": None,
+    }
+
+    local_name = access.get("local_node")
+    if local_name and local_name in all_nodes:
+        node = all_nodes[local_name]
+        user, pw = _get_node_ssh_creds(node, infra)
+        result["local"] = (node, user, pw)
+
+    swarm_name = access.get("swarm_manager")
+    if swarm_name and swarm_name in all_nodes:
+        node = all_nodes[swarm_name]
+        user, pw = _get_node_ssh_creds(node, infra)
+        result["swarm"] = (node, user, pw)
+
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Prompt builder
 # ---------------------------------------------------------------------------
 
@@ -123,15 +163,43 @@ def _build_standalone_table(infra: dict[str, Any]) -> str:
 
 
 def _build_local_services_table(infra: dict[str, Any], redis_password: str) -> str:
-    """Build the local services table with quick-check commands."""
+    """Build the local services table with quick-check commands.
+
+    If [docker_access].local_node is configured, all docker commands are
+    prefixed with SSH to the appropriate node (CCA runs in a container
+    without docker socket access). Falls back to direct commands if not set.
+    """
     services = infra.get("local_services", [])
     if not services:
         return ""
+
+    # Resolve docker access — determines if we need SSH for docker commands
+    docker = _resolve_docker_access(infra)
+    local_access = docker["local"]
+
+    if local_access:
+        node, ssh_user, ssh_pass = local_access
+        node_name = node.get("name", "?")
+        node_ip = node["ip"]
+        if ssh_pass:
+            ssh_prefix = f"sshpass -p '{ssh_pass}' ssh -o StrictHostKeyChecking=no {ssh_user}@{node_ip}"
+        else:
+            ssh_prefix = f"ssh -o StrictHostKeyChecking=no {ssh_user}@{node_ip}"
+        header_text = (
+            f"These services run as Docker containers on **{node_name}** ({node_ip}). "
+            f"Use SSH to check them:"
+        )
+    else:
+        ssh_prefix = ""
+        header_text = (
+            "These services run as Docker containers on THIS machine. "
+            "Check them directly without SSH:"
+        )
+
     lines = [
-        "## Local Services (this node)",
+        "## Local Services",
         "",
-        "These services run as Docker containers on THIS machine. "
-        "Check them directly without SSH:",
+        header_text,
         "",
         "| Service | Container | Port | Quick Check |",
         "|---------|-----------|------|-------------|",
@@ -145,8 +213,18 @@ def _build_local_services_table(infra: dict[str, Any], redis_password: str) -> s
             f"| {s.get('port', '')} | `{check}` |"
         )
     lines.append("")
-    lines.append("Container status: `docker ps --format 'table {{.Names}}\\t{{.Status}}\\t{{.Ports}}'`")
-    lines.append("Container logs: `docker logs --tail 50 <container-name>`")
+
+    if ssh_prefix:
+        lines.append(
+            f"Container status: `{ssh_prefix} "
+            "\"docker ps --format 'table {{.Names}}\\t{{.Status}}\\t{{.Ports}}'\"`"
+        )
+        lines.append(
+            f"Container logs: `{ssh_prefix} \"docker logs --tail 50 <container-name>\"`"
+        )
+    else:
+        lines.append("Container status: `docker ps --format 'table {{.Names}}\\t{{.Status}}\\t{{.Ports}}'`")
+        lines.append("Container logs: `docker logs --tail 50 <container-name>`")
     return "\n".join(lines)
 
 
@@ -322,11 +400,38 @@ def get_infra_task_definition(current_time: str) -> str:
         sections.append("")
 
     # Important notes
+    docker = _resolve_docker_access(infra)
     sections.extend([
         "### Important",
         "- This container runs with host networking — `127.0.0.1` reaches host services directly.",
         "- `systemctl` is NOT available (no systemd in container). Use `docker ps`/`docker logs` instead.",
     ])
+
+    # Docker access via SSH — tell the agent exactly how to run docker commands
+    if docker["local"]:
+        node, ssh_user, ssh_pass = docker["local"]
+        if ssh_pass:
+            ssh_cmd = f"sshpass -p '{ssh_pass}' ssh -o StrictHostKeyChecking=no {ssh_user}@{node['ip']}"
+        else:
+            ssh_cmd = f"ssh -o StrictHostKeyChecking=no {ssh_user}@{node['ip']}"
+        sections.append(
+            f"- **Docker is NOT available locally** — this container has no docker socket. "
+            f"For container commands (docker ps, docker logs, docker restart), "
+            f"SSH to **{node.get('name', node['ip'])}** ({node['ip']}): "
+            f"`{ssh_cmd} \"docker ps\"`"
+        )
+
+    if docker["swarm"]:
+        node, ssh_user, ssh_pass = docker["swarm"]
+        if ssh_pass:
+            ssh_cmd = f"sshpass -p '{ssh_pass}' ssh -o StrictHostKeyChecking=no {ssh_user}@{node['ip']}"
+        else:
+            ssh_cmd = f"ssh -o StrictHostKeyChecking=no {ssh_user}@{node['ip']}"
+        sections.append(
+            f"- Docker Swarm commands (service ls, node ls, stack deploy): "
+            f"SSH to swarm manager **{node.get('name', node['ip'])}** ({node['ip']}): "
+            f"`{ssh_cmd} \"docker node ls\"`"
+        )
 
     # GPU check via SSH (per-node credentials)
     gpu_nodes = [

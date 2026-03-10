@@ -12,6 +12,17 @@ user = "your-ssh-user"
 password_env = "CCA_SSH_PASSWORD"   # env var name (not the password itself)
 
 # ──────────────────────────────────────────────
+# DOCKER COMMAND ACCESS (recommended)
+# ──────────────────────────────────────────────
+# If CCA runs inside a container without docker socket access,
+# docker commands must be executed via SSH to the appropriate node.
+# Omit this section if CCA has direct docker socket access.
+
+# [docker_access]
+# local_node = "gpu-node-1"    # where CCA runs (docker ps/logs)
+# swarm_manager = "manager1"   # swarm leader (docker service ls/node ls)
+
+# ──────────────────────────────────────────────
 # DOCKER SWARM NODES (optional)
 # ──────────────────────────────────────────────
 # Per-node credential overrides (optional):

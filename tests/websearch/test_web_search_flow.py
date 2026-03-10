@@ -3,9 +3,8 @@
 Tests the SEARCH route's ability to find, fetch, and synthesize web info
 through a realistic multi-turn research session.
 
-Replaces 9 individual tests: basic_search, search_no_results,
-search_tech_topic, search_recent_news, comparison_search,
-fetch_public_url, search_then_read.
+Exercises: web_search, fetch_url_content, multi-source synthesis,
+search-then-read chaining.
 """
 
 import uuid
@@ -32,16 +31,19 @@ def _has_real_urls(text):
 
 
 class TestWebSearchFlow:
-    """Web search: research, fetch URLs, and compare — like a real person would."""
+    """Web search: research, fetch URLs, compare, and discover — like a real person would."""
 
     @pytest.mark.slow
-    def test_research_session(self, cca, trace_test, judge_model):
-        """Multi-turn research session: search → fetch URL → compare.
+    def test_web_search_flow(self, cca, trace_test, judge_model):
+        """4-turn research session: search → fetch URL → compare → discover.
+
+        Absorbs: test_research_session, test_search_and_read.
 
         Simulates a developer researching LLM serving frameworks:
         1. Ask about vLLM — expects web search with real URLs
         2. Paste a URL to read — expects page content extraction
         3. Compare vLLM vs TGI — expects multi-source synthesis
+        4. Discover a new tool — expects search + read chaining
         """
         tracker = cca.tracker()
         session_id = f"test-wsf-{uuid.uuid4().hex[:8]}"
@@ -116,46 +118,33 @@ class TestWebSearchFlow:
                 f"Response: {r3.content[:300]}"
             )
 
-        finally:
-            tracker.cleanup()
-
-    def test_search_and_read(self, cca, trace_test, judge_model):
-        """Single-turn: search + read in one go (multi-step tool chaining).
-
-        Validates that the agent can search for something, find a relevant
-        page, fetch it, and summarize — all from one natural request.
-        This is the "I don't know what this is, go figure it out" pattern.
-        """
-        tracker = cca.tracker()
-        session_id = f"test-wsf-sr-{uuid.uuid4().hex[:8]}"
-        tracker.track_session(session_id)
-
-        try:
-            message = (
+            # ── Turn 4: Discover something new (search + read chaining) ──
+            # Tests the "I don't know what this is, go figure it out" pattern.
+            # Agent should search, find a page, fetch it, and summarize.
+            msg4 = (
                 "I keep hearing about httpbin.org but I've never used it. "
                 "Can you find out what it is and read the site for me?"
             )
+            r4 = cca.chat(msg4, session_id=session_id)
+            evaluate_response(r4, msg4, trace_test, judge_model, "websearch")
 
-            result = cca.chat(message, session_id=session_id)
-            evaluate_response(result, message, trace_test, judge_model, "websearch")
+            trace_test.set_attribute("cca.test.t4_response", r4.content[:500])
+            assert r4.content, "Turn 4 returned empty"
+            _assert_tools_used(r4, min_iterations=2)
 
-            trace_test.set_attribute("cca.test.response", result.content[:500])
-            assert result.content, "Agent returned empty response"
-            _assert_tools_used(result, min_iterations=2)
-
-            content_lower = result.content.lower()
+            content_lower = r4.content.lower()
             assert "httpbin" in content_lower, (
                 "Response doesn't mention httpbin. "
-                f"Response: {result.content[:300]}"
+                f"Response: {r4.content[:300]}"
             )
             # Should have actually read something — not just parroted the name
             has_substance = any(w in content_lower for w in [
                 "http", "api", "test", "request", "endpoint", "response",
             ])
-            trace_test.set_attribute("cca.test.has_substance", has_substance)
+            trace_test.set_attribute("cca.test.t4_has_substance", has_substance)
             assert has_substance, (
                 "Response mentions httpbin but has no substance about what it does. "
-                f"Response: {result.content[:300]}"
+                f"Response: {r4.content[:300]}"
             )
 
         finally:
