@@ -327,6 +327,14 @@ class IOInterface(ABC):
         """
         pass
 
+    async def clear_response_text(self) -> None:  # noqa
+        """Clear buffered response text (e.g., before synthesis).
+
+        No-op for non-buffered IO (REPL, stdio). HttpIOInterface overrides
+        this to clear assistant chunks from the stream buffer.
+        """
+        pass
+
     def _get_selection_prompt(
         self,
         choices: List[Choice],

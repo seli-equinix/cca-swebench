@@ -203,6 +203,8 @@ class DualModelOrchestrator(AnthropicLLMOrchestrator):
     _escalated_groups: list = PrivateAttr(default_factory=list)
     _tool_router_config: object = PrivateAttr(default=None)
     _route_name: str = PrivateAttr(default="unknown")
+    # Per-tool call log: accumulated across all iterations for ContextMetadata
+    _tool_call_log: list = PrivateAttr(default_factory=list)
 
     # ── Model selection ──────────────────────────────────────────
 
@@ -1062,6 +1064,8 @@ class DualModelOrchestrator(AnthropicLLMOrchestrator):
                         "Dual-model: tool selector says no additional tools needed — "
                         "proceeding with synthesis"
                     )
+                    # Clear mid-loop "working notes" so synthesis doesn't duplicate
+                    await context.io.clear_response_text()
                     self._synthesis_done = True
                     context.memory_manager.add_messages([
                         CfMessage(
@@ -1087,6 +1091,8 @@ class DualModelOrchestrator(AnthropicLLMOrchestrator):
                     logger.info(
                         "Dual-model: tool work complete — forcing consolidated response"
                     )
+                    # Clear mid-loop "working notes" so synthesis doesn't duplicate
+                    await context.io.clear_response_text()
                     self._synthesis_done = True
                     context.memory_manager.add_messages([
                         CfMessage(
@@ -1145,9 +1151,15 @@ class DualModelOrchestrator(AnthropicLLMOrchestrator):
         all_tool_names: set[str],
         context: AnalectRunContext,
     ) -> ant.MessageContentToolResult | None:
-        """Override to detect tool errors for the quality gate."""
+        """Override to detect tool errors and log tool calls."""
         result = await super()._process_tool_use(tool_use, all_tool_names, context)
-        if result is not None and getattr(result, "is_error", False):
+        is_error = result is not None and getattr(result, "is_error", False)
+        self._tool_call_log.append({
+            "name": tool_use.name,
+            "success": not is_error,
+            "iteration": self._num_iterations,
+        })
+        if is_error:
             self._last_queue_had_error = True
         return result
 

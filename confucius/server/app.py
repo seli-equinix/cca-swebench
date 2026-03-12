@@ -54,6 +54,7 @@ from .models import (
     ChatCompletionResponse,
     HealthResponse,
     ModelInfo,
+    ToolCallInfo,
     build_chunk,
     build_completion_response,
     generate_completion_id,
@@ -830,6 +831,10 @@ async def _handle_chat_completions(
                 from .models import ContextMetadata
                 return ContextMetadata(
                     tool_iterations=getattr(entry, "_tool_iterations", 0),
+                    tool_calls=[
+                        ToolCallInfo(name=tc["name"], success=tc["success"], iteration=tc["iteration"])
+                        for tc in (getattr(entry, "_tool_calls", None) or [])
+                    ] or None,
                     route=route.expert.value if route else None,
                     user_identified=session.identified,
                     user_name=user.display_name if user else None,
@@ -941,6 +946,10 @@ async def _handle_chat_completions(
 
                     metadata = ContextMetadata(
                         tool_iterations=tool_iters,
+                        tool_calls=[
+                            ToolCallInfo(name=tc["name"], success=tc["success"], iteration=tc["iteration"])
+                            for tc in (getattr(entry, "_tool_calls", None) or [])
+                        ] or None,
                         route=route_name,
                         user_identified=session.identified,
                         user_name=user.display_name if user else None,

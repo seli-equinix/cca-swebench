@@ -104,6 +104,7 @@ class HttpRoutedEntry(Analect[EntryInput, EntryOutput], EntryAnalectMixin):
     _tool_iterations: int = PrivateAttr(default=0)
     _tools_escalated: bool = PrivateAttr(default=False)
     _escalated_groups: list = PrivateAttr(default_factory=list)
+    _tool_calls: list = PrivateAttr(default_factory=list)
 
     def __init__(
         self,
@@ -253,5 +254,6 @@ class HttpRoutedEntry(Analect[EntryInput, EntryOutput], EntryAnalectMixin):
             self._circuit_breaker_fired = orchestrator._error_hint_injected
             self._tools_escalated = orchestrator._escalation_count > 0
             self._escalated_groups = list(orchestrator._escalated_groups)
+            self._tool_calls = list(orchestrator._tool_call_log)
 
         return EntryOutput()

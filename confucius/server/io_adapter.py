@@ -143,6 +143,14 @@ class HttpIOInterface(IOInterface):
         """Clear the output buffer for the next request."""
         self._buffer.clear()
 
+    async def clear_response_text(self) -> None:
+        """Clear assistant chunks from buffer, preserving thinking/progress.
+
+        Called before synthesis to discard mid-loop "working notes" so the
+        final response doesn't contain duplicated content.
+        """
+        self._buffer = [c for c in self._buffer if c.chunk_type != "assistant"]
+
     async def signal_done(self) -> None:
         """Signal the stream queue that the agent is done."""
         if self._stream_queue is not None:

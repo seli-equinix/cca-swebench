@@ -98,6 +98,7 @@ ROUTE_TOOL_GROUPS: Dict[ExpertType, List[ToolGroup]] = {
         ToolGroup.WEB,          # web_search + fetch_url_content
         ToolGroup.USER_MEMORY,  # remember_user_fact + get_user_context
         ToolGroup.NOTES,        # search_notes (past session knowledge)
+        ToolGroup.DOCUMENT,     # upload/search/list/promote documents
     ],
     ExpertType.PLANNER: [
         ToolGroup.ARCHITECT,
