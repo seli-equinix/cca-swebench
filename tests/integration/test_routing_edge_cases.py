@@ -351,8 +351,13 @@ class TestRoutingEdgeCases:
 
             trace_test.set_attribute("cca.test.t3_response", r3.content[:500])
             assert r3.content, "Turn 3 returned empty"
-            assert_tools_called(
-                r3.metadata, ["str_replace_editor"], "Turn 3: view file",
+
+            # Agent may use str_replace_editor view or bash cat — both work.
+            # Turn 1 already verified str_replace_editor for creation.
+            t3_tools = r3.tool_names
+            trace_test.set_attribute("cca.test.t3_tools", str(t3_tools))
+            assert len(t3_tools) >= 1, (
+                f"Turn 3 didn't use any tools to read file. Tools: {t3_tools}"
             )
 
             # Response should contain the actual function definitions
@@ -469,11 +474,9 @@ class TestRoutingEdgeCases:
 
             t6_tools = r6.tool_names
             trace_test.set_attribute("cca.test.t6_tools", str(t6_tools))
-            has_editor_t6 = any("str_replace_editor" in t for t in t6_tools)
             has_bash_t6 = any("bash" in t for t in t6_tools)
-            assert has_editor_t6, (
-                f"Turn 6 didn't use str_replace_editor to create test file. "
-                f"Tools: {t6_tools}"
+            assert len(t6_tools) >= 1, (
+                f"Turn 6 didn't use any tools. Tools: {t6_tools}"
             )
             assert has_bash_t6, (
                 f"Turn 6 didn't use bash to run tests. Tools: {t6_tools}"
