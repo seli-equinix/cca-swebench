@@ -178,6 +178,7 @@ class RouterConfig(BaseModel):
     timeout_ms: int = 10000
     fallback_entry: str = "coder"
     temperature: float = 0.1
+    escalation_enabled: bool = False  # Big LLM reroute for ambiguous classifications
 
     class Config:
         extra = "ignore"

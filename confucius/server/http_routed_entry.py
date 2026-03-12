@@ -250,10 +250,7 @@ class HttpRoutedEntry(Analect[EntryInput, EntryOutput], EntryAnalectMixin):
             iters = orchestrator._num_iterations
             self._tool_iterations = max(0, iters - 1) if iters > 0 else 0
             self._nudge_skipped = orchestrator._nudge_skipped
-            self._circuit_breaker_fired = (
-                orchestrator._error_hint_injected
-                or orchestrator._total_consecutive_errors > 0
-            )
+            self._circuit_breaker_fired = orchestrator._error_hint_injected
             self._tools_escalated = orchestrator._escalation_count > 0
             self._escalated_groups = list(orchestrator._escalated_groups)
 

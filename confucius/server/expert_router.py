@@ -29,7 +29,7 @@ import re
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 import httpx
 
@@ -1006,6 +1006,17 @@ async def classify_request(
         decision = _guard_recall_not_clarify(decision, user_message)
         decision = _guard_clarify_has_task(decision, user_message)
 
+        # LLM escalation: if message has 2+ route signals and Functionary
+        # picked none of them, ask the big LLM to resolve the conflict.
+        if config.escalation_enabled:
+            signals = _detect_route_signals(user_message)
+            if _has_routing_conflict(decision, signals):
+                logger.info(
+                    "Route conflict: Functionary=%s, signals=%s. Escalating to big LLM.",
+                    decision.expert.value, [s.value for s in signals],
+                )
+                decision = await _big_llm_reroute(user_message, decision, signals)
+
         span.set_status(StatusCode.OK)
 
         user_info = f", user='{decision.detected_user_name}'" if decision.detected_user_name else ""
@@ -1298,6 +1309,123 @@ def _guard_clarify_has_task(
         return decision
 
     return decision
+
+
+# ========================= LLM Escalation =========================
+# When Functionary 8B produces an ambiguous routing decision (message has
+# signals for 2+ routes but Functionary picked none of them), escalate to
+# the big coder LLM for a smarter re-route. ~5-10% of requests.
+
+_INFRA_PATTERNS = re.compile(
+    r"\b("
+    r"docker|container|swarm|node|deployment|service|redis|nginx"
+    r"|server|port|health.?check|curl|ssh|disk|memory|cpu|load"
+    r")\b",
+    re.IGNORECASE,
+)
+
+_USER_IDENTITY_PATTERNS = re.compile(
+    r"\b("
+    r"my name is|i'?m\s+\w+|call me|what do you know about me"
+    r"|delete my profile|my skills|my preferences|remember that i"
+    r")\b",
+    re.IGNORECASE,
+)
+
+_ROUTE_NAME_MAP = {v.value: v for v in ExpertType if v not in (ExpertType.DIRECT, ExpertType.CLARIFY)}
+
+
+def _detect_route_signals(message: str) -> Set[ExpertType]:
+    """Detect which routes the message has keyword signals for."""
+    signals: Set[ExpertType] = set()
+    if _CODING_PATTERNS.search(message):
+        signals.add(ExpertType.CODER)
+    if _SEARCH_PATTERNS.search(message):
+        signals.add(ExpertType.SEARCH)
+    if _INFRA_PATTERNS.search(message):
+        signals.add(ExpertType.INFRASTRUCTURE)
+    if _USER_IDENTITY_PATTERNS.search(message):
+        signals.add(ExpertType.USER)
+    return signals
+
+
+def _has_routing_conflict(decision: RouteDecision, signals: Set[ExpertType]) -> bool:
+    """True if Functionary's route conflicts with message signals.
+
+    Only escalates when there are 2+ conflicting keyword signals AND
+    Functionary chose a route that isn't any of them.
+    """
+    if len(signals) < 2:
+        return False  # Single signal or none → no ambiguity, trust Functionary
+    if decision.expert in signals:
+        return False  # Functionary picked one of the signaled routes → reasonable
+    return True       # Multiple signals AND Functionary picked none of them
+
+
+async def _big_llm_reroute(
+    user_message: str,
+    decision: RouteDecision,
+    signals: Set[ExpertType],
+) -> RouteDecision:
+    """Ask the big LLM to resolve a routing conflict.
+
+    Only changes decision.expert — preserves detected_user_name,
+    detected_user_facts, estimated_steps, and all other fields.
+    On any failure, returns the original decision unchanged.
+    """
+    signal_names = sorted(s.value for s in signals)
+    prompt = (
+        f"A user sent this message to a coding assistant:\n"
+        f'"{user_message[:500]}"\n\n'
+        f"A fast classifier routed it to: {decision.expert.value}\n"
+        f"But the message contains signals for: {', '.join(signal_names)}\n\n"
+        f"What is the PRIMARY intent? Reply with ONLY the route name:\n"
+        f"- coder (writing/editing/debugging code)\n"
+        f"- user (managing profile, facts, identity)\n"
+        f"- infrastructure (Docker, servers, networking)\n"
+        f"- search (web research, current information)\n"
+        f"- planner (architecture, design, planning)"
+    )
+    try:
+        from ..core.config import get_llm_params
+
+        params = get_llm_params("coder")
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.post(
+                f"{params.base_url}/chat/completions",
+                json={
+                    "model": params.model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "max_tokens": 10,
+                    "temperature": 0.0,
+                },
+            )
+            resp.raise_for_status()
+            answer = resp.json()["choices"][0]["message"]["content"].strip().lower()
+
+        # Parse the route name from the response
+        for route_name, expert_type in _ROUTE_NAME_MAP.items():
+            if route_name in answer:
+                old_route = decision.expert.value
+                decision.expert = expert_type
+                logger.info(
+                    "LLM escalation: %s → %s (answer=%r)",
+                    old_route, route_name, answer,
+                )
+                return decision
+
+        logger.warning(
+            "LLM escalation: unrecognized answer %r, keeping %s",
+            answer, decision.expert.value,
+        )
+        return decision
+
+    except Exception as e:
+        logger.warning(
+            "LLM escalation failed (%s), keeping %s",
+            e, decision.expert.value,
+        )
+        return decision  # Graceful degradation — never blocks routing
 
 
 def _parse_tool_call(

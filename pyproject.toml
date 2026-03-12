@@ -34,3 +34,6 @@ asyncio_mode = "auto"
 # Enforce sequential execution — disable parallel plugins that could
 # overwhelm the CCA server with concurrent LLM requests.
 addopts = "-p no:xdist -p no:randomly --tb=short"
+filterwarnings = [
+    "ignore::DeprecationWarning:phoenix.evals",
+]
