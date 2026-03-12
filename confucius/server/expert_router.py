@@ -1400,12 +1400,14 @@ async def _big_llm_reroute(
                 json={
                     "model": params.model,
                     "messages": [{"role": "user", "content": prompt}],
-                    "max_tokens": 10,
+                    "max_tokens": 64,
                     "temperature": 0.0,
                 },
             )
             resp.raise_for_status()
-            answer = resp.json()["choices"][0]["message"]["content"].strip().lower()
+            raw = resp.json()["choices"][0]["message"]["content"] or ""
+            # Strip any <think>...</think> leftover from reasoning models
+            answer = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip().lower()
 
         # Parse the route name from the response
         for route_name, expert_type in _ROUTE_NAME_MAP.items():
