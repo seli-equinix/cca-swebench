@@ -1,9 +1,10 @@
-#!/bin/bash
+#!/bin/sh
 # Workspace-Sync: Clone/pull repos from GitLab to Spark1 local storage.
 # EVA (source): periodic pull (CCA reads for tracing/analysis).
 # EVA-migration: clone only (CCA manages commits/push directly).
+# NOTE: Uses POSIX sh (alpine image has ash, not bash).
 
-set -euo pipefail
+set -eu
 
 GITLAB_URL="${GITLAB_URL:-http://192.168.4.204:8929}"
 GITLAB_USER="${GITLAB_USER:-root}"
@@ -20,8 +21,10 @@ REMOTE_BASE="http://${GITLAB_USER}:${GITLAB_PASS}@$(echo "$GITLAB_URL" | sed 's|
 apk add --no-cache curl git 2>/dev/null || true
 
 # Clone source project repos if not already cloned
-IFS=',' read -ra SRC_LIST <<< "$SOURCE_PROJECTS"
-for project in "${SRC_LIST[@]}"; do
+OLD_IFS="$IFS"
+IFS=','
+for project in $SOURCE_PROJECTS; do
+    IFS="$OLD_IFS"
     project=$(echo "$project" | xargs)
     if [ ! -d "${LOCAL_PATH}/${project}/.git" ]; then
         echo "[$(date -Iseconds)] Cloning source repo: ${project}..."
@@ -29,10 +32,13 @@ for project in "${SRC_LIST[@]}"; do
             echo "[$(date -Iseconds)] WARN: clone failed for ${project} (repo may not exist yet)"
     fi
 done
+IFS="$OLD_IFS"
 
 # Clone migration repos if not already cloned
-IFS=',' read -ra MIG_LIST <<< "$MIGRATION_PROJECTS"
-for project in "${MIG_LIST[@]}"; do
+OLD_IFS="$IFS"
+IFS=','
+for project in $MIGRATION_PROJECTS; do
+    IFS="$OLD_IFS"
     project=$(echo "$project" | xargs)
     if [ ! -d "${LOCAL_PATH}/${project}/.git" ]; then
         echo "[$(date -Iseconds)] Cloning migration repo: ${project}..."
@@ -46,6 +52,7 @@ for project in "${MIG_LIST[@]}"; do
         fi
     fi
 done
+IFS="$OLD_IFS"
 
 echo "[$(date -Iseconds)] Starting pull loop (interval=${SYNC_INTERVAL}s, sources=${SOURCE_PROJECTS})"
 
@@ -54,7 +61,10 @@ while true; do
     sleep "$SYNC_INTERVAL"
     CHANGED=0
 
-    for project in "${SRC_LIST[@]}"; do
+    OLD_IFS="$IFS"
+    IFS=','
+    for project in $SOURCE_PROJECTS; do
+        IFS="$OLD_IFS"
         project=$(echo "$project" | xargs)
         cd "${LOCAL_PATH}/${project}" 2>/dev/null || continue
         BEFORE=$(git rev-parse HEAD 2>/dev/null || echo "none")
@@ -62,9 +72,10 @@ while true; do
         AFTER=$(git rev-parse HEAD 2>/dev/null || echo "none")
         if [ "$BEFORE" != "$AFTER" ]; then
             CHANGED=1
-            echo "[$(date -Iseconds)] ${project} updated: ${BEFORE:0:8} → ${AFTER:0:8}"
+            echo "[$(date -Iseconds)] ${project} updated"
         fi
     done
+    IFS="$OLD_IFS"
 
     # Trigger CCA re-index if source code changed
     if [ "$CHANGED" -eq 1 ]; then
