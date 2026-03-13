@@ -1380,3 +1380,25 @@ async def clean_workspace_files(prefix: str = "") -> Dict[str, Any]:
     except Exception as e:
         return {"error": str(e), "deleted": deleted}
     return {"deleted_count": len(deleted), "deleted": deleted, "errors": errors}
+
+
+@app.post("/workspace/reindex")
+async def reindex_workspace(request: Request) -> Dict[str, Any]:
+    """Trigger workspace re-indexing (Qdrant + Memgraph).
+
+    Called by the workspace-sync sidecar when source repos are updated,
+    or manually to force a full re-index.
+    """
+    if backend_clients is None:
+        raise HTTPException(status_code=503, detail="BackendClients not available")
+
+    body = await request.json()
+    paths = body.get("paths", ["/workspace"])
+    force = body.get("force", False)
+
+    from .code_intelligence.workspace_indexer import WorkspaceIndexer
+
+    indexer = WorkspaceIndexer(backend_clients)
+    stats = await indexer.index_paths(paths, force=force)
+    logger.info("Workspace reindex complete: %s", stats)
+    return {"status": "ok", "result": stats}

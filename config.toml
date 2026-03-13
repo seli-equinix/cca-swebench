@@ -198,6 +198,6 @@ temperature = 0.1
 # YAML, and Markdown files.
 
 [indexer]
-paths = ["/workspace", "/home/seli/docker-swarm-stacks"]
+paths = ["/workspace"]
 collection = "codebase_files"
 skip_dirs = [".git", "node_modules", "__pycache__", ".venv", "venv", "build", "dist"]

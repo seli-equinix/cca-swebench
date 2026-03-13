@@ -470,7 +470,7 @@ class WorkspaceIndexer:
         for i, (pid, vec, meta, doc) in enumerate(
             zip(ids, vectors, metadatas, documents)
         ):
-            meta["_content"] = doc[:5000]  # Store truncated content for retrieval
+            meta["_content"] = doc[:15000]  # Store content for retrieval (trace tool needs full bodies)
             points.append(PointStruct(
                 id=pid,
                 vector=vec,

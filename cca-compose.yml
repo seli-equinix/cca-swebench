@@ -130,6 +130,26 @@ services:
       - ./config.toml:/etc/cca/config.toml:ro
       - ./infrastructure.toml:/etc/cca/infrastructure.toml:ro
 
+  # Workspace sync: clones EVA + EVA-migration from GitLab, periodic pull on source repos
+  workspace-sync:
+    image: alpine:latest
+    container_name: cca-workspace-sync
+    restart: unless-stopped
+    entrypoint: /bin/sh
+    command: ["/sync/sync.sh"]
+    network_mode: host
+    volumes:
+      - ${CCA_WORKSPACE:-/data/cca-workspace}:/workspace:rw
+      - ./workspace-sync:/sync:ro
+    environment:
+      - GITLAB_URL=http://192.168.4.204:8929
+      - GITLAB_USER=root
+      - GITLAB_PASS=Loveme-sex64
+      - SOURCE_PROJECTS=EVA
+      - MIGRATION_PROJECTS=EVA-migration
+      - SYNC_INTERVAL=60
+      - CCA_URL=http://localhost:8500
+
 volumes:
   cca-sessions:
     driver: local

@@ -54,6 +54,7 @@ class ToolGroup(str, Enum):
     DOCUMENT = "document"   # DocumentToolsExtension (4 tools: upload_document, search_documents, list_session_docs, promote_doc_to_knowledge)
     NOTES = "notes"         # NoteSearchExtension (1 tool: search_notes)
     RULES = "rules"         # RulesToolsExtension (4 tools: create_rule, request_rule, list_rules, delete_rule)
+    TRACE = "trace"         # CodeTraceExtension (2 tools: trace_execution, assemble_traced_code)
     # Future groups — uncomment as extensions are ported:
     # VISION = "vision"     # VisionToolsExtension (1 tool)
     # GIT = "git"           # GitToolsExtension (1 tool)
@@ -81,6 +82,7 @@ ROUTE_TOOL_GROUPS: Dict[ExpertType, List[ToolGroup]] = {
         ToolGroup.DOCUMENT,
         ToolGroup.NOTES,
         ToolGroup.RULES,
+        ToolGroup.TRACE,
     ],
     ExpertType.INFRASTRUCTURE: [
         ToolGroup.ARCHITECT,
@@ -94,6 +96,7 @@ ROUTE_TOOL_GROUPS: Dict[ExpertType, List[ToolGroup]] = {
         ToolGroup.DOCUMENT,
         ToolGroup.NOTES,
         ToolGroup.RULES,
+        ToolGroup.TRACE,
     ],
     ExpertType.SEARCH: [
         ToolGroup.WEB,          # web_search + fetch_url_content
@@ -174,6 +177,7 @@ POOLABLE_GROUPS: frozenset[ToolGroup] = frozenset({
     ToolGroup.DOCUMENT,
     ToolGroup.NOTES,
     ToolGroup.RULES,
+    ToolGroup.TRACE,
 })
 
 
@@ -272,6 +276,13 @@ def _build_extension_for_group(
             return RulesToolsExtension(
                 backend_clients=backend_clients,
                 user_id=user_id,
+            )
+
+    elif group == ToolGroup.TRACE:
+        if backend_clients is not None:
+            from .code_intelligence.trace_extension import CodeTraceExtension
+            return CodeTraceExtension(
+                backend_clients=backend_clients,
             )
 
     return None

@@ -1203,6 +1203,16 @@ class TreeSitterParser:
             for match in re.finditer(r'using\s+module\s+([A-Za-z][A-Za-z0-9._-]*)', code, re.IGNORECASE):
                 modules.add(match.group(1))
 
+            # Dot-sourcing: . .\script.ps1 or . $PSScriptRoot\module.psm1
+            for match in re.finditer(
+                r'(?:^|\n)\s*\.\s+["\']?\$?(?:PSScriptRoot[\\/])?([^\s"\'#;]+\.ps[md]*1)["\']?',
+                code, re.IGNORECASE,
+            ):
+                source_file = match.group(1)
+                basename = source_file.rsplit("\\", 1)[-1].rsplit("/", 1)[-1]
+                if basename and len(basename) > 4:
+                    modules.add(basename)
+
         except Exception as e:
             logger.debug(f"Error extracting PowerShell imports: {e}")
 
