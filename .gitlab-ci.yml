@@ -93,7 +93,7 @@ test-new-user-onboarding:
     - python -m pytest tests/user/test_new_user_onboarding.py -v --tb=short --with-judge --junitxml=report-new-user-onboarding.xml
   environment:
     name: test/user/new-user-onboarding
-    tier: testing
+    deployment_tier: testing
   rules:
     - if: '$RUN_TEST == "new-user-onboarding"'
     - if: '$RUN_TEST == "all-user"'
@@ -108,7 +108,7 @@ test-profile-crud:
     - python -m pytest tests/user/test_profile_crud.py -v --tb=short --with-judge --junitxml=report-profile-crud.xml
   environment:
     name: test/user/profile-crud
-    tier: testing
+    deployment_tier: testing
   rules:
     - if: '$RUN_TEST == "profile-crud"'
     - if: '$RUN_TEST == "all-user"'
@@ -123,7 +123,7 @@ test-returning-user-memory:
     - python -m pytest tests/user/test_returning_user_memory.py -v --tb=short --with-judge --junitxml=report-returning-user.xml
   environment:
     name: test/user/returning-user-memory
-    tier: testing
+    deployment_tier: testing
   rules:
     - if: '$RUN_TEST == "returning-user-memory"'
     - if: '$RUN_TEST == "all-user"'
@@ -142,7 +142,7 @@ test-web-search-flow:
     - python -m pytest tests/websearch/test_web_search_flow.py -v --tb=short --with-judge --junitxml=report-web-search.xml
   environment:
     name: test/websearch/web-search-flow
-    tier: testing
+    deployment_tier: testing
   rules:
     - if: '$RUN_TEST == "web-search-flow"'
     - if: '$RUN_TEST == "all-websearch"'
@@ -161,7 +161,7 @@ test-bash-execution:
     - python -m pytest tests/coder/test_bash_execution.py -v --tb=short --with-judge --junitxml=report-bash-execution.xml
   environment:
     name: test/coder/bash-execution
-    tier: testing
+    deployment_tier: testing
   rules:
     - if: '$RUN_TEST == "bash-execution"'
     - if: '$RUN_TEST == "all-coder"'
@@ -176,7 +176,7 @@ test-code-edit-flow:
     - python -m pytest tests/coder/test_code_edit_flow.py -v --tb=short --with-judge --junitxml=report-code-edit.xml
   environment:
     name: test/coder/code-edit-flow
-    tier: testing
+    deployment_tier: testing
   rules:
     - if: '$RUN_TEST == "code-edit-flow"'
     - if: '$RUN_TEST == "all-coder"'
@@ -191,7 +191,7 @@ test-code-intelligence:
     - python -m pytest tests/coder/test_code_intelligence.py -v --tb=short --with-judge --junitxml=report-code-intelligence.xml
   environment:
     name: test/coder/code-intelligence
-    tier: testing
+    deployment_tier: testing
   rules:
     - if: '$RUN_TEST == "code-intelligence"'
     - if: '$RUN_TEST == "all-coder"'
@@ -206,7 +206,7 @@ test-code-trace:
     - python -m pytest tests/coder/test_code_trace.py -v --tb=short --with-judge --junitxml=report-code-trace.xml
   environment:
     name: test/coder/code-trace
-    tier: testing
+    deployment_tier: testing
   rules:
     - if: '$RUN_TEST == "code-trace"'
     - if: '$RUN_TEST == "all-coder"'
@@ -221,7 +221,7 @@ test-codebase-search:
     - python -m pytest tests/coder/test_codebase_search.py -v --tb=short --with-judge --junitxml=report-codebase-search.xml
   environment:
     name: test/coder/codebase-search
-    tier: testing
+    deployment_tier: testing
   rules:
     - if: '$RUN_TEST == "codebase-search"'
     - if: '$RUN_TEST == "all-coder"'
@@ -236,7 +236,7 @@ test-document-workflow:
     - python -m pytest tests/coder/test_document_workflow.py -v --tb=short --with-judge --junitxml=report-document-workflow.xml
   environment:
     name: test/coder/document-workflow
-    tier: testing
+    deployment_tier: testing
   rules:
     - if: '$RUN_TEST == "document-workflow"'
     - if: '$RUN_TEST == "all-coder"'
@@ -251,7 +251,7 @@ test-rule-lifecycle:
     - python -m pytest tests/coder/test_rule_lifecycle.py -v --tb=short --with-judge --junitxml=report-rule-lifecycle.xml
   environment:
     name: test/coder/rule-lifecycle
-    tier: testing
+    deployment_tier: testing
   rules:
     - if: '$RUN_TEST == "rule-lifecycle"'
     - if: '$RUN_TEST == "all-coder"'
@@ -266,7 +266,7 @@ test-workspace-indexing:
     - python -m pytest tests/coder/test_workspace_indexing.py -v --tb=short --with-judge --junitxml=report-workspace-indexing.xml
   environment:
     name: test/coder/workspace-indexing
-    tier: testing
+    deployment_tier: testing
   rules:
     - if: '$RUN_TEST == "workspace-indexing"'
     - if: '$RUN_TEST == "all-coder"'
@@ -285,7 +285,7 @@ test-cross-session-recall:
     - python -m pytest tests/integration/test_cross_session_recall.py -v --tb=short --with-judge --junitxml=report-cross-session.xml
   environment:
     name: test/integration/cross-session-recall
-    tier: testing
+    deployment_tier: testing
   rules:
     - if: '$RUN_TEST == "cross-session-recall"'
     - if: '$RUN_TEST == "all-integration"'
@@ -300,7 +300,7 @@ test-eva-code-trace:
     - python -m pytest tests/integration/test_eva_code_trace.py -v --tb=short --with-judge --junitxml=report-eva-trace.xml
   environment:
     name: test/integration/eva-code-trace
-    tier: testing
+    deployment_tier: testing
   rules:
     - if: '$RUN_TEST == "eva-code-trace"'
     - if: '$RUN_TEST == "all-integration"'
@@ -315,7 +315,7 @@ test-infra-inspection:
     - python -m pytest tests/integration/test_infra_inspection_flow.py -v --tb=short --with-judge --junitxml=report-infra-inspection.xml
   environment:
     name: test/integration/infra-inspection
-    tier: testing
+    deployment_tier: testing
   rules:
     - if: '$RUN_TEST == "infra-inspection"'
     - if: '$RUN_TEST == "all-integration"'
@@ -330,7 +330,7 @@ test-knowledge-pipeline:
     - python -m pytest tests/integration/test_knowledge_pipeline.py -v --tb=short --with-judge --junitxml=report-knowledge-pipeline.xml
   environment:
     name: test/integration/knowledge-pipeline
-    tier: testing
+    deployment_tier: testing
   rules:
     - if: '$RUN_TEST == "knowledge-pipeline"'
     - if: '$RUN_TEST == "all-integration"'
@@ -345,7 +345,7 @@ test-routing-edge-cases:
     - python -m pytest tests/integration/test_routing_edge_cases.py -v --tb=short --with-judge --junitxml=report-routing-edge.xml
   environment:
     name: test/integration/routing-edge-cases
-    tier: testing
+    deployment_tier: testing
   rules:
     - if: '$RUN_TEST == "routing-edge-cases"'
     - if: '$RUN_TEST == "all-integration"'
@@ -360,7 +360,7 @@ test-security-edge-cases:
     - python -m pytest tests/integration/test_security_edge_cases.py -v --tb=short --with-judge --junitxml=report-security-edge.xml
   environment:
     name: test/integration/security-edge-cases
-    tier: testing
+    deployment_tier: testing
   rules:
     - if: '$RUN_TEST == "security-edge-cases"'
     - if: '$RUN_TEST == "all-integration"'
@@ -375,7 +375,7 @@ test-tool-isolation:
     - python -m pytest tests/integration/test_tool_isolation.py -v --tb=short --with-judge --junitxml=report-tool-isolation.xml
   environment:
     name: test/integration/tool-isolation
-    tier: testing
+    deployment_tier: testing
   rules:
     - if: '$RUN_TEST == "tool-isolation"'
     - if: '$RUN_TEST == "all-integration"'
