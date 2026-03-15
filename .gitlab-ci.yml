@@ -18,11 +18,13 @@ stages:
   - build
   - preflight
   - test
+  - deploy
 
 # Only trigger from web UI, API, or scheduled — NOT on push.
 # This prevents 25 "manual" jobs cluttering every commit.
 workflow:
   rules:
+    - if: $CI_PIPELINE_SOURCE == "push"
     - if: $CI_PIPELINE_SOURCE == "web"
     - if: $CI_PIPELINE_SOURCE == "api"
     - if: $CI_PIPELINE_SOURCE == "trigger"
@@ -381,3 +383,20 @@ test-tool-isolation:
     - if: '$RUN_TEST == "all-integration"'
     - if: '$RUN_TEST == "all"'
   timeout: 15m
+
+# ════════════════════════════════════════════
+#  PAGES — deploy CCA test dashboard
+# ════════════════════════════════════════════
+
+pages:
+  stage: deploy
+  image: alpine:latest
+  script:
+    - echo "Deploying CCA test dashboard to GitLab Pages"
+    - ls -la public/
+  artifacts:
+    paths:
+      - public
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "push"
+    - if: '$RUN_TEST == "pages"'

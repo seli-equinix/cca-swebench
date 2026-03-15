@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CCA Test Dashboard</title>
+<style>
+  :root {
+    --bg: #0d1117; --surface: #161b22; --border: #30363d;
+    --text: #c9d1d9; --text-dim: #8b949e; --text-bright: #f0f6fc;
+    --green: #3fb950; --red: #f85149; --yellow: #d29922;
+    --blue: #58a6ff; --purple: #bc8cff; --cyan: #39d2c0;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif; font-size: 14px; }
+  a { color: var(--blue); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  .header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 16px 24px; display: flex; justify-content: space-between; align-items: center; }
+  .header h1 { font-size: 20px; color: var(--text-bright); font-weight: 600; }
+  .header-links { display: flex; gap: 16px; font-size: 13px; }
+  .header-links a { color: var(--text-dim); }
+
+  .summary { display: flex; gap: 24px; padding: 16px 24px; border-bottom: 1px solid var(--border); background: var(--surface); }
+  .stat { text-align: center; }
+  .stat-value { font-size: 24px; font-weight: 700; color: var(--text-bright); }
+  .stat-label { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; }
+  .stat-pass .stat-value { color: var(--green); }
+  .stat-fail .stat-value { color: var(--red); }
+
+  .controls { padding: 12px 24px; display: flex; gap: 12px; align-items: center; border-bottom: 1px solid var(--border); }
+  .btn { padding: 6px 14px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; font-size: 13px; }
+  .btn:hover { border-color: var(--text-dim); }
+  .btn-primary { background: #238636; border-color: #2ea043; color: #fff; }
+  .btn-primary:hover { background: #2ea043; }
+  .btn-danger { border-color: var(--red); color: var(--red); }
+  .btn-sm { padding: 3px 10px; font-size: 12px; }
+  .auto-refresh { margin-left: auto; font-size: 12px; color: var(--text-dim); display: flex; align-items: center; gap: 6px; }
+
+  .category { padding: 8px 24px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; color: var(--cyan); background: rgba(57,210,192,0.05); border-bottom: 1px solid var(--border); }
+
+  .test-row { display: grid; grid-template-columns: 40px 1fr 80px 100px 80px 60px 100px; align-items: center; padding: 10px 24px; border-bottom: 1px solid var(--border); gap: 8px; }
+  .test-row:hover { background: rgba(255,255,255,0.02); }
+  .test-num { color: var(--text-dim); font-size: 12px; text-align: right; padding-right: 8px; }
+  .test-name { font-weight: 500; color: var(--text-bright); }
+  .test-exercises { font-size: 12px; color: var(--text-dim); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; text-transform: uppercase; }
+  .badge-pass { background: rgba(63,185,80,0.15); color: var(--green); }
+  .badge-fail { background: rgba(248,81,73,0.15); color: var(--red); }
+  .badge-run { background: rgba(210,153,34,0.15); color: var(--yellow); animation: pulse 1.5s infinite; }
+  .badge-never { background: rgba(139,148,158,0.1); color: var(--text-dim); }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+  .test-time { font-size: 12px; color: var(--text-dim); }
+  .test-dur { font-size: 12px; color: var(--text-dim); }
+  .test-traces { font-size: 12px; }
+  .test-actions { display: flex; gap: 4px; }
+
+  /* Log panel */
+  .log-panel { display: none; position: fixed; bottom: 0; left: 0; right: 0; height: 45vh; background: var(--surface); border-top: 2px solid var(--blue); z-index: 100; flex-direction: column; }
+  .log-panel.open { display: flex; }
+  .log-header { display: flex; justify-content: space-between; align-items: center; padding: 8px 16px; border-bottom: 1px solid var(--border); }
+  .log-header h3 { font-size: 14px; color: var(--text-bright); }
+  .log-body { flex: 1; overflow-y: auto; padding: 12px 16px; font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: 12px; line-height: 1.6; white-space: pre-wrap; word-break: break-all; color: var(--text-dim); }
+  .log-body.has-content { padding: 0; }
+  .log-body pre { margin: 0; padding: 12px 16px; }
+
+  .loading { text-align: center; padding: 40px; color: var(--text-dim); }
+  .error-msg { color: var(--red); padding: 8px 16px; font-size: 13px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>CCA Test Dashboard</h1>
+  <div class="header-links">
+    <a href="http://192.168.4.204:8929/root/cca-tests/-/pipelines" target="_blank">Pipelines</a>
+    <a href="http://192.168.4.204:8929/root/cca-tests/-/environments" target="_blank">Environments</a>
+    <a href="http://192.168.4.204:6006" target="_blank">Phoenix</a>
+    <a href="http://192.168.4.205:8500/health" target="_blank">CCA Health</a>
+  </div>
+</div>
+
+<div class="summary" id="summary">
+  <div class="stat"><div class="stat-value" id="total">-</div><div class="stat-label">Total</div></div>
+  <div class="stat stat-pass"><div class="stat-value" id="passing">-</div><div class="stat-label">Passing</div></div>
+  <div class="stat stat-fail"><div class="stat-value" id="failing">-</div><div class="stat-label">Failing</div></div>
+  <div class="stat"><div class="stat-value" id="never">-</div><div class="stat-label">Never Run</div></div>
+  <div class="stat"><div class="stat-value" id="traces">-</div><div class="stat-label">Traces</div></div>
+</div>
+
+<div class="controls">
+  <button class="btn btn-primary" onclick="runGroup('all')">Run All</button>
+  <button class="btn" onclick="runGroup('all-user')">User</button>
+  <button class="btn" onclick="runGroup('all-websearch')">Websearch</button>
+  <button class="btn" onclick="runGroup('all-coder')">Coder</button>
+  <button class="btn" onclick="runGroup('all-integration')">Integration</button>
+  <button class="btn" onclick="refreshAll()">Refresh</button>
+  <div class="auto-refresh">
+    <input type="checkbox" id="autoRefresh" checked onchange="toggleAutoRefresh()">
+    <label for="autoRefresh">Auto-refresh 30s</label>
+    <span id="countdown"></span>
+  </div>
+</div>
+
+<div id="test-list"><div class="loading">Loading...</div></div>
+
+<div class="log-panel" id="logPanel">
+  <div class="log-header">
+    <h3 id="logTitle">Logs</h3>
+    <div>
+      <a id="logJobLink" href="#" target="_blank" style="font-size:12px;margin-right:12px;">Open in GitLab</a>
+      <button class="btn btn-sm" onclick="closeLog()">Close</button>
+    </div>
+  </div>
+  <div class="log-body" id="logBody">Waiting for output...</div>
+</div>
+
+<script>
+const GITLAB_API = 'http://192.168.4.204:8929/api/v4';
+const PROJECT_ID = 4;
+const TOKEN = 'glpat-eZyXT0lQhgPgjkxOprDD8m86MQp1OjEH.01.0w0yemn3j';
+const PHOENIX_GQL = 'http://192.168.4.204:6007/graphql';
+const PHOENIX_UI = 'http://192.168.4.204:6006';
+
+const TESTS = [
+  {name:'new-user-onboarding', cat:'user', turns:4, exercises:'user_id, profile, notes, preference recall'},
+  {name:'profile-crud', cat:'user', turns:5, exercises:'profile CRUD, cascade delete'},
+  {name:'returning-user-memory', cat:'user', turns:6, exercises:'fact recall, fact overwrite, accumulation'},
+  {name:'web-search-flow', cat:'websearch', turns:4, exercises:'web_search, fetch_url, multi-source'},
+  {name:'bash-execution', cat:'coder', turns:4, exercises:'bash_tool, str_replace_editor, user recall'},
+  {name:'code-edit-flow', cat:'coder', turns:3, exercises:'str_replace_editor (create/edit), bash'},
+  {name:'code-intelligence', cat:'coder', turns:3, exercises:'call_graph, orphan_functions, dependencies'},
+  {name:'code-trace', cat:'coder', turns:3, exercises:'trace_execution, assemble_traced_code'},
+  {name:'codebase-search', cat:'coder', turns:2, exercises:'search_codebase, search_knowledge'},
+  {name:'document-workflow', cat:'coder', turns:3, exercises:'upload_doc, search, promote to knowledge'},
+  {name:'rule-lifecycle', cat:'coder', turns:2, exercises:'create/list/request/delete rule'},
+  {name:'workspace-indexing', cat:'coder', turns:3, exercises:'index_workspace, search_codebase'},
+  {name:'cross-session-recall', cat:'integration', turns:4, exercises:'NoteObserver, past_insights, cross-session'},
+  {name:'eva-code-trace', cat:'integration', turns:3, exercises:'search, trace, assemble (EVA PowerShell)'},
+  {name:'infra-inspection', cat:'integration', turns:4, exercises:'bash (docker, curl, ssh), INFRA route'},
+  {name:'knowledge-pipeline', cat:'integration', turns:2, exercises:'facts, notes, memory REST, NoteObserver'},
+  {name:'routing-edge-cases', cat:'integration', turns:6, exercises:'router, PLANNER, CODER, INFRA routes'},
+  {name:'security-edge-cases', cat:'integration', turns:4, exercises:'anon identity, SSRF, scheme, no-results'},
+  {name:'tool-isolation', cat:'integration', turns:1, exercises:'route tool boundary enforcement'},
+];
+
+let testStatus = {};
+let phoenixData = {};
+let refreshTimer = null;
+let countdownSec = 30;
+let logPollTimer = null;
+
+// ── API helpers ──
+
+async function gitlabGet(path) {
+  const r = await fetch(`${GITLAB_API}${path}`, {headers:{'PRIVATE-TOKEN':TOKEN}});
+  return r.json();
+}
+
+async function phoenixQuery(query) {
+  try {
+    const r = await fetch(PHOENIX_GQL, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({query})
+    });
+    return (await r.json()).data;
+  } catch(e) { return null; }
+}
+
+// ── Data fetching ──
+
+async function fetchPipelineStatus() {
+  const pipelines = await gitlabGet(`/projects/${PROJECT_ID}/pipelines?per_page=100`);
+  const status = {};
+  for (const p of pipelines) {
+    try {
+      const jobs = await gitlabGet(`/projects/${PROJECT_ID}/pipelines/${p.id}/jobs`);
+      for (const j of jobs) {
+        const testName = j.name.replace('test-','');
+        if (!status[testName] || new Date(j.created_at) > new Date(status[testName].created_at)) {
+          status[testName] = {
+            status: j.status, duration: j.duration, created_at: j.created_at,
+            finished_at: j.finished_at, job_id: j.id, pipeline_id: p.id,
+            web_url: j.web_url, allow_failure: j.allow_failure
+          };
+        }
+      }
+    } catch(e) {}
+  }
+  return status;
+}
+
+async function fetchPhoenixProjects() {
+  const data = await phoenixQuery(`{
+    projects(first:50) { edges { node { name traceCount recordCount endTime
+      latencyMsQuantile(probability:0.5) } } }
+  }`);
+  if (!data) return {};
+  const result = {};
+  for (const e of data.projects.edges) {
+    result[e.node.name] = e.node;
+  }
+  return result;
+}
+
+// ── Rendering ──
+
+function timeAgo(dateStr) {
+  if (!dateStr) return 'never';
+  const diff = (Date.now() - new Date(dateStr).getTime()) / 1000;
+  if (diff < 60) return `${Math.floor(diff)}s ago`;
+  if (diff < 3600) return `${Math.floor(diff/60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff/3600)}h ago`;
+  return `${Math.floor(diff/86400)}d ago`;
+}
+
+function fmtDuration(sec) {
+  if (!sec) return '-';
+  if (sec < 60) return `${Math.floor(sec)}s`;
+  return `${Math.floor(sec/60)}m ${Math.floor(sec%60)}s`;
+}
+
+function statusBadge(s) {
+  if (!s) return '<span class="badge badge-never">-</span>';
+  if (s.status === 'success') return '<span class="badge badge-pass">Pass</span>';
+  if (s.status === 'failed') return '<span class="badge badge-fail">Fail</span>';
+  if (s.status === 'running') return '<span class="badge badge-run">Running</span>';
+  if (s.status === 'pending' || s.status === 'created') return '<span class="badge badge-run">Pending</span>';
+  return `<span class="badge badge-never">${s.status}</span>`;
+}
+
+function renderTests() {
+  let html = '';
+  let lastCat = '';
+  let passing = 0, failing = 0, never = 0, totalTraces = 0;
+
+  TESTS.forEach((t, i) => {
+    if (t.cat !== lastCat) {
+      lastCat = t.cat;
+      html += `<div class="category">${t.cat}</div>`;
+    }
+    const s = testStatus[t.name];
+    const ph = phoenixData[`test/${t.name}`] || {};
+    const traces = ph.traceCount || 0;
+    totalTraces += traces;
+
+    if (!s) never++;
+    else if (s.status === 'success') passing++;
+    else if (s.status === 'failed') failing++;
+
+    const phoenixLink = traces > 0
+      ? `<a href="${PHOENIX_UI}/projects/test%2F${t.name}" target="_blank">${traces}</a>`
+      : '<span style="color:var(--text-dim)">0</span>';
+
+    html += `<div class="test-row">
+      <div class="test-num">${i+1}</div>
+      <div>
+        <div class="test-name">${t.name}</div>
+        <div class="test-exercises">${t.exercises}</div>
+      </div>
+      <div>${statusBadge(s)}</div>
+      <div class="test-time">${s ? timeAgo(s.finished_at || s.created_at) : '<span style="color:var(--text-dim)">never</span>'}</div>
+      <div class="test-dur">${s ? fmtDuration(s.duration) : '-'}</div>
+      <div class="test-traces">${phoenixLink}</div>
+      <div class="test-actions">
+        <button class="btn btn-sm btn-primary" onclick="runTest('${t.name}')">Run</button>
+        ${s ? `<button class="btn btn-sm" onclick="showLog(${s.job_id},'${t.name}')">Log</button>` : ''}
+      </div>
+    </div>`;
+  });
+
+  document.getElementById('test-list').innerHTML = html;
+  document.getElementById('total').textContent = TESTS.length;
+  document.getElementById('passing').textContent = passing;
+  document.getElementById('failing').textContent = failing;
+  document.getElementById('never').textContent = never;
+  document.getElementById('traces').textContent = totalTraces;
+}
+
+// ── Actions ──
+
+async function runTest(name) {
+  const formData = new FormData();
+  formData.append('ref', 'main');
+  formData.append('variables[RUN_TEST]', name);
+
+  const r = await fetch(`${GITLAB_API}/projects/${PROJECT_ID}/pipeline`, {
+    method: 'POST', headers: {'PRIVATE-TOKEN': TOKEN}, body: formData
+  });
+  const pipeline = await r.json();
+  if (pipeline.id) {
+    // Poll for the test job to appear, then show live log
+    setTimeout(async () => {
+      const jobs = await gitlabGet(`/projects/${PROJECT_ID}/pipelines/${pipeline.id}/jobs`);
+      const testJob = jobs.find(j => j.name === `test-${name}`);
+      if (testJob) {
+        showLog(testJob.id, name, true);
+      }
+      await refreshAll();
+    }, 3000);
+  }
+}
+
+function runGroup(group) {
+  runTest(group);
+}
+
+async function showLog(jobId, testName, live = false) {
+  const panel = document.getElementById('logPanel');
+  const body = document.getElementById('logBody');
+  const title = document.getElementById('logTitle');
+  const link = document.getElementById('logJobLink');
+
+  panel.classList.add('open');
+  title.textContent = `${testName} — Job #${jobId}`;
+  link.href = `http://192.168.4.204:8929/root/cca-tests/-/jobs/${jobId}`;
+  body.textContent = 'Loading...';
+
+  // Clear previous polling
+  if (logPollTimer) { clearInterval(logPollTimer); logPollTimer = null; }
+
+  async function fetchLog() {
+    try {
+      const r = await fetch(`${GITLAB_API}/projects/${PROJECT_ID}/jobs/${jobId}/trace`, {
+        headers: {'PRIVATE-TOKEN': TOKEN}
+      });
+      const text = await r.text();
+      // Strip ANSI codes and GitLab section markers
+      const clean = text.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')
+                        .replace(/section_(start|end):\d+:[^\n]*/g, '')
+                        .replace(/\d{4}-\d{2}-\d{2}T[\d:.]+Z \d{2}O /g, '');
+      body.textContent = clean;
+      body.scrollTop = body.scrollHeight;
+      return r.headers.get('X-Gitlab-Job-Status') || 'unknown';
+    } catch(e) {
+      body.textContent = `Error fetching log: ${e.message}`;
+      return 'error';
+    }
+  }
+
+  await fetchLog();
+
+  if (live) {
+    logPollTimer = setInterval(async () => {
+      const text = await fetchLog();
+      // Check if job is done
+      const job = await gitlabGet(`/projects/${PROJECT_ID}/jobs/${jobId}`);
+      if (['success','failed','canceled'].includes(job.status)) {
+        clearInterval(logPollTimer);
+        logPollTimer = null;
+        await fetchLog(); // Final fetch
+        await refreshAll();
+      }
+    }, 3000);
+  }
+}
+
+function closeLog() {
+  document.getElementById('logPanel').classList.remove('open');
+  if (logPollTimer) { clearInterval(logPollTimer); logPollTimer = null; }
+}
+
+// ── Refresh ──
+
+async function refreshAll() {
+  const [status, phoenix] = await Promise.all([
+    fetchPipelineStatus(),
+    fetchPhoenixProjects()
+  ]);
+  testStatus = status;
+  phoenixData = phoenix;
+  renderTests();
+  countdownSec = 30;
+}
+
+function toggleAutoRefresh() {
+  if (document.getElementById('autoRefresh').checked) {
+    startAutoRefresh();
+  } else {
+    if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
+    document.getElementById('countdown').textContent = '';
+  }
+}
+
+function startAutoRefresh() {
+  if (refreshTimer) clearInterval(refreshTimer);
+  countdownSec = 30;
+  refreshTimer = setInterval(() => {
+    countdownSec--;
+    document.getElementById('countdown').textContent = `(${countdownSec}s)`;
+    if (countdownSec <= 0) {
+      refreshAll();
+      countdownSec = 30;
+    }
+  }, 1000);
+}
+
+// ── Init ──
+refreshAll().then(() => {
+  if (document.getElementById('autoRefresh').checked) startAutoRefresh();
+});
+</script>
+</body>
+</html>
