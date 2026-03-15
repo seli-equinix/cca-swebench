@@ -1274,6 +1274,12 @@ class DualModelOrchestrator(AnthropicLLMOrchestrator):
         self._last_queue_had_error = False
         self._had_tool_iterations = True
 
+        # Reset streamed-text counter: if the model is making more tool
+        # calls, any text it streamed so far was a progress update, not a
+        # complete answer.  Only the FINAL text (after all tools finish)
+        # should be considered for the synthesis-skip threshold.
+        self._primary_streamed_chars = 0
+
         # Count research tool calls for monitoring
         self._search_call_count += sum(
             1 for n in self._last_tool_names if n in RESEARCH_TOOLS
