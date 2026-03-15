@@ -200,9 +200,12 @@ def cmd_run(test_name: str) -> None:
 
     phoenix_project = f"test/{test_name}" if test_name in ALL_TESTS else "cca-tests"
     print(f"{BOLD}Triggering: {test_name}{RESET}")
+    variables = [{"key": "RUN_TEST", "value": test_name}]
+    if test_name in ALL_TESTS:
+        variables.append({"key": "PHOENIX_PROJECT_NAME", "value": phoenix_project})
     pipeline = _api("POST", f"/projects/{PROJECT_ID}/pipeline", {
         "ref": "main",
-        "variables": [{"key": "RUN_TEST", "value": test_name}],
+        "variables": variables,
     })
     pid = pipeline["id"]
     web_url = pipeline["web_url"]
