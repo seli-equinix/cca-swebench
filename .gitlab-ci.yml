@@ -139,6 +139,8 @@ test-web-search-flow:
   variables:
     PHOENIX_PROJECT_NAME: "test/web-search-flow"
   script:
+    - echo "DEBUG PHOENIX_PROJECT_NAME=$PHOENIX_PROJECT_NAME"
+    - python3 -c "import os; print(f'PYTHON PHOENIX_PROJECT_NAME={os.getenv(\"PHOENIX_PROJECT_NAME\", \"NOT_SET\")}')"
     - python -m pytest tests/websearch/test_web_search_flow.py -v --tb=short --with-judge --junitxml=report-web-search.xml
   environment:
     name: test/websearch/web-search-flow
