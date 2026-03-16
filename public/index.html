@@ -396,9 +396,8 @@ function renderTests() {
     else if (s.status === 'failed') failing++;
 
     const phId = ph.id || '';
-    const phoenixLink = traces > 0 && phId
-      ? `<a href="${PHOENIX_UI}/projects/${encodeURIComponent(phId)}" target="_blank">${traces}</a>`
-      : `<span style="color:var(--text-dim)">${traces}</span>`;
+    const phUrl = phId ? `${PHOENIX_UI}/projects/${encodeURIComponent(phId)}` : `${PHOENIX_UI}`;
+    const phoenixLink = `<a href="${phUrl}" target="_blank">${traces}</a>`;
 
     const isFailed = s && s.status === 'failed';
     const failCls = isFailed ? ' failed' : '';
@@ -432,7 +431,7 @@ function renderTests() {
         <button class="btn btn-sm btn-primary" onclick="event.stopPropagation();runTest('${t.name}')">Run</button>
         ${s ? `<button class="btn btn-sm" onclick="event.stopPropagation();showLog(${s.job_id},'${t.name}')">Log</button>` : ''}
         ${s ? `<a class="btn btn-sm" href="http://192.168.4.204:8929/root/cca-tests/-/jobs/${s.job_id}" target="_blank" onclick="event.stopPropagation()">Job</a>` : ''}
-        ${phId ? `<a class="btn btn-sm" href="${PHOENIX_UI}/projects/${encodeURIComponent(phId)}" target="_blank" onclick="event.stopPropagation()">Traces</a>` : ''}
+        <a class="btn btn-sm" href="${phUrl}" target="_blank" onclick="event.stopPropagation()">Traces</a>
       </div>
     </div>`;
 
