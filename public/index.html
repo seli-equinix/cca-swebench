@@ -475,14 +475,22 @@ async function clearTest(name) {
   const log = [];
   showStatus(`Clearing ${name}...`);
 
-  // 1. GitLab: delete pipelines that contain this test's jobs
+  // 1. GitLab: delete pipelines that ONLY ran this test (not shared group runs)
   try {
     const runs = testStatus[name] || [];
     const pipelineIds = [...new Set(runs.map(r => r.pipeline_id))];
+    let deleted = 0, skipped = 0;
     for (const pid of pipelineIds) {
-      await gitlabDelete(`/projects/${PROJECT_ID}/pipelines/${pid}`);
+      const jobs = await gitlabGet(`/projects/${PROJECT_ID}/pipelines/${pid}/jobs`);
+      const testJobs = jobs.filter(j => j.name.startsWith('test-'));
+      if (testJobs.length <= 1) {
+        await gitlabDelete(`/projects/${PROJECT_ID}/pipelines/${pid}`);
+        deleted++;
+      } else {
+        skipped++;
+      }
     }
-    log.push(`GitLab: ${pipelineIds.length} pipelines`);
+    log.push(`GitLab: ${deleted} deleted, ${skipped} shared (kept)`);
   } catch(e) { log.push(`GitLab: ${e.message}`); }
 
   // 2. Phoenix: delete the test project
