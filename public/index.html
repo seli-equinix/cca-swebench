@@ -39,7 +39,15 @@
 
   .category { padding: 8px 24px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; color: var(--cyan); background: rgba(57,210,192,0.05); border-bottom: 1px solid var(--border); }
 
-  .test-row { display: grid; grid-template-columns: 40px 1fr 80px 100px 80px 60px 100px; align-items: center; padding: 10px 24px; border-bottom: 1px solid var(--border); gap: 8px; }
+  .test-row { display: grid; grid-template-columns: 40px 1fr 100px 80px 100px 80px 60px 100px; align-items: center; padding: 10px 24px; border-bottom: 1px solid var(--border); gap: 8px; }
+  .history-bar { display: flex; gap: 3px; align-items: center; }
+  .history-dot { width: 8px; height: 8px; border-radius: 50%; cursor: pointer; transition: transform 0.15s; }
+  .history-dot:hover { transform: scale(1.5); }
+  .history-dot.pass { background: var(--green); }
+  .history-dot.fail { background: var(--red); }
+  .history-dot.other { background: var(--text-dim); opacity: 0.4; }
+  .history-dot.running { background: var(--yellow); animation: pulse 1.5s infinite; }
+  .history-dot.selected { box-shadow: 0 0 0 2px var(--blue); }
   .test-row:hover { background: rgba(255,255,255,0.02); }
   .test-num { color: var(--text-dim); font-size: 12px; text-align: right; padding-right: 8px; }
   .test-name { font-weight: 500; color: var(--text-bright); }
@@ -164,6 +172,7 @@ const TESTS = [
 let testStatus = {};
 let phoenixData = {};
 let failureCache = {};
+let selectedRun = {};
 let refreshTimer = null;
 let countdownSec = 30;
 let logPollTimer = null;
@@ -233,7 +242,8 @@ function parseFailureInfo(logText) {
 }
 
 async function fetchFailureInfo(testName, jobId) {
-  if (failureCache[testName] && failureCache[testName].job_id === jobId) return failureCache[testName].info;
+  const cacheKey = `${testName}:${jobId}`;
+  if (failureCache[cacheKey]) return failureCache[cacheKey].info;
   try {
     const r = await fetch(`${GITLAB_API}/projects/${PROJECT_ID}/jobs/${jobId}/trace`, {
       headers: {'PRIVATE-TOKEN': TOKEN}
@@ -243,10 +253,31 @@ async function fetchFailureInfo(testName, jobId) {
                       .replace(/section_(start|end):\d+:[^\n]*/g, '')
                       .replace(/\d{4}-\d{2}-\d{2}T[\d:.]+Z \d{2}O /g, '');
     const info = parseFailureInfo(clean);
-    failureCache[testName] = { job_id: jobId, info };
+    failureCache[cacheKey] = { info };
     return info;
   } catch(e) {
     return { type: 'unknown', summary: 'Failed to fetch log', details: [], pytestSummary: '' };
+  }
+}
+
+async function selectRun(testName, jobId) {
+  const runs = testStatus[testName] || [];
+  const run = runs.find(r => r.job_id === jobId);
+  if (!run) return;
+  selectedRun[testName] = run;
+  // If the selected run is failed, fetch its failure info
+  if (run.status === 'failed') {
+    await fetchFailureInfo(testName, jobId);
+  }
+  renderTests();
+  // Auto-expand the failure panel if failed
+  if (run.status === 'failed') {
+    const row = document.querySelector(`.test-row[data-test="${testName}"]`);
+    const panel = document.getElementById(`fail-${testName}`);
+    if (row && panel && !panel.classList.contains('open')) {
+      row.classList.add('expanded');
+      panel.classList.add('open');
+    }
   }
 }
 
@@ -280,22 +311,26 @@ async function phoenixQuery(query) {
 // ── Data fetching ──
 
 async function fetchPipelineStatus() {
-  const pipelines = await gitlabGet(`/projects/${PROJECT_ID}/pipelines?per_page=100`);
+  const pipelines = await gitlabGet(`/projects/${PROJECT_ID}/pipelines?per_page=20`);
   const status = {};
   for (const p of pipelines) {
     try {
       const jobs = await gitlabGet(`/projects/${PROJECT_ID}/pipelines/${p.id}/jobs`);
       for (const j of jobs) {
         const testName = j.name.replace('test-','');
-        if (!status[testName] || new Date(j.created_at) > new Date(status[testName].created_at)) {
-          status[testName] = {
-            status: j.status, duration: j.duration, created_at: j.created_at,
-            finished_at: j.finished_at, job_id: j.id, pipeline_id: p.id,
-            web_url: j.web_url, allow_failure: j.allow_failure
-          };
-        }
+        if (!status[testName]) status[testName] = [];
+        status[testName].push({
+          status: j.status, duration: j.duration, created_at: j.created_at,
+          finished_at: j.finished_at, job_id: j.id, pipeline_id: p.id,
+          web_url: j.web_url, allow_failure: j.allow_failure
+        });
       }
     } catch(e) {}
+  }
+  // Sort each test's runs newest-first, keep max 10
+  for (const name in status) {
+    status[name].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    status[name] = status[name].slice(0, 10);
   }
   return status;
 }
@@ -349,7 +384,9 @@ function renderTests() {
       lastCat = t.cat;
       html += `<div class="category">${t.cat}</div>`;
     }
-    const s = testStatus[t.name];
+    const runs = testStatus[t.name] || [];
+    // Use selected run if set, otherwise latest (index 0)
+    const s = selectedRun[t.name] || runs[0] || null;
     const ph = phoenixData[`test/${t.name}`] || {};
     const traces = ph.traceCount || 0;
     totalTraces += traces;
@@ -366,12 +403,26 @@ function renderTests() {
     const failCls = isFailed ? ' failed' : '';
     const failClick = isFailed ? ` onclick="toggleFailure('${t.name}', event)"` : '';
 
+    // History dots — oldest first (left-to-right = chronological)
+    let dotsHtml = '<div class="history-bar">';
+    const display = runs.slice(0, 10).reverse();
+    for (const run of display) {
+      const cls = run.status === 'success' ? 'pass'
+        : run.status === 'failed' ? 'fail'
+        : run.status === 'running' || run.status === 'pending' || run.status === 'created' ? 'running' : 'other';
+      const sel = s && run.job_id === s.job_id ? ' selected' : '';
+      const tip = `${timeAgo(run.finished_at || run.created_at)} &middot; ${fmtDuration(run.duration)} &middot; Pipeline #${run.pipeline_id}`;
+      dotsHtml += `<div class="history-dot ${cls}${sel}" title="${tip}" onclick="event.stopPropagation();selectRun('${t.name}',${run.job_id})"></div>`;
+    }
+    dotsHtml += '</div>';
+
     html += `<div class="test-row${failCls}" data-test="${t.name}"${failClick}>
       <div class="test-num">${i+1}</div>
       <div>
         <div class="test-name">${t.name}</div>
         <div class="test-exercises">${t.exercises}</div>
       </div>
+      <div>${dotsHtml}</div>
       <div>${statusBadge(s)}</div>
       <div class="test-time">${s ? timeAgo(s.finished_at || s.created_at) : '<span style="color:var(--text-dim)">never</span>'}</div>
       <div class="test-dur">${s ? fmtDuration(s.duration) : '-'}</div>
@@ -384,7 +435,8 @@ function renderTests() {
 
     // Collapsible failure panel
     if (isFailed) {
-      const fc = failureCache[t.name];
+      const cacheKey = `${t.name}:${s.job_id}`;
+      const fc = failureCache[cacheKey];
       let panelContent = '<span style="color:var(--text-dim)">Loading failure details...</span>';
       if (fc) {
         const fi = fc.info;
@@ -509,10 +561,11 @@ async function refreshAll() {
   phoenixData = phoenix;
   renderTests();
 
-  // Progressive: fetch failure details for failed tests, then re-render
+  // Progressive: fetch failure details for the active run of failed tests
   let fetched = false;
   for (const t of TESTS) {
-    const s = testStatus[t.name];
+    const runs = testStatus[t.name] || [];
+    const s = selectedRun[t.name] || runs[0] || null;
     if (s && s.status === 'failed') {
       await fetchFailureInfo(t.name, s.job_id);
       fetched = true;
