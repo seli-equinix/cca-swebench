@@ -1,18 +1,19 @@
-# CCA Test Pipeline — Variable-driven test selection with per-test tracking.
+# CCA Test Pipeline — One test per pipeline, always isolated.
 #
 # Each test runs in its own pipeline with:
 #   - GitLab environment (deployment history per test)
 #   - Phoenix project (isolated trace history per test)
 #
 # Trigger via Makefile:  make test NAME=eva-code-trace
-# Or via dashboard:      make dashboard  (interactive menu)
+# Or via dashboard:      Run / Run All buttons (each test = separate pipeline)
 # Or via API:            POST /pipeline  variables[RUN_TEST]=eva-code-trace
 #
 # RUN_TEST values:
 #   Individual:  eva-code-trace, code-trace, bash-execution, etc.
-#   Groups:      all-user, all-coder, all-integration
-#   Everything:  all
 #   Build only:  build
+#
+# Group runs (all, all-user, etc.) are handled by the dashboard — it fires
+# one pipeline per test, never groups multiple tests into one pipeline.
 
 stages:
   - build
@@ -99,8 +100,6 @@ test-new-user-onboarding:
     deployment_tier: testing
   rules:
     - if: '$RUN_TEST == "new-user-onboarding"'
-    - if: '$RUN_TEST == "all-user"'
-    - if: '$RUN_TEST == "all"'
   timeout: 10m
 
 test-profile-crud:
@@ -114,8 +113,6 @@ test-profile-crud:
     deployment_tier: testing
   rules:
     - if: '$RUN_TEST == "profile-crud"'
-    - if: '$RUN_TEST == "all-user"'
-    - if: '$RUN_TEST == "all"'
   timeout: 10m
 
 test-returning-user-memory:
@@ -129,8 +126,6 @@ test-returning-user-memory:
     deployment_tier: testing
   rules:
     - if: '$RUN_TEST == "returning-user-memory"'
-    - if: '$RUN_TEST == "all-user"'
-    - if: '$RUN_TEST == "all"'
   timeout: 20m
 
 # ════════════════════════════════════════════
@@ -148,8 +143,6 @@ test-web-search-flow:
     deployment_tier: testing
   rules:
     - if: '$RUN_TEST == "web-search-flow"'
-    - if: '$RUN_TEST == "all-websearch"'
-    - if: '$RUN_TEST == "all"'
   timeout: 10m
 
 # ════════════════════════════════════════════
@@ -167,8 +160,6 @@ test-bash-execution:
     deployment_tier: testing
   rules:
     - if: '$RUN_TEST == "bash-execution"'
-    - if: '$RUN_TEST == "all-coder"'
-    - if: '$RUN_TEST == "all"'
   timeout: 10m
 
 test-code-edit-flow:
@@ -182,8 +173,6 @@ test-code-edit-flow:
     deployment_tier: testing
   rules:
     - if: '$RUN_TEST == "code-edit-flow"'
-    - if: '$RUN_TEST == "all-coder"'
-    - if: '$RUN_TEST == "all"'
   timeout: 15m
 
 test-code-intelligence:
@@ -197,8 +186,6 @@ test-code-intelligence:
     deployment_tier: testing
   rules:
     - if: '$RUN_TEST == "code-intelligence"'
-    - if: '$RUN_TEST == "all-coder"'
-    - if: '$RUN_TEST == "all"'
   timeout: 15m
 
 test-code-trace:
@@ -212,8 +199,6 @@ test-code-trace:
     deployment_tier: testing
   rules:
     - if: '$RUN_TEST == "code-trace"'
-    - if: '$RUN_TEST == "all-coder"'
-    - if: '$RUN_TEST == "all"'
   timeout: 15m
 
 test-codebase-search:
@@ -227,8 +212,6 @@ test-codebase-search:
     deployment_tier: testing
   rules:
     - if: '$RUN_TEST == "codebase-search"'
-    - if: '$RUN_TEST == "all-coder"'
-    - if: '$RUN_TEST == "all"'
   timeout: 10m
 
 test-document-workflow:
@@ -242,8 +225,6 @@ test-document-workflow:
     deployment_tier: testing
   rules:
     - if: '$RUN_TEST == "document-workflow"'
-    - if: '$RUN_TEST == "all-coder"'
-    - if: '$RUN_TEST == "all"'
   timeout: 10m
 
 test-rule-lifecycle:
@@ -257,8 +238,6 @@ test-rule-lifecycle:
     deployment_tier: testing
   rules:
     - if: '$RUN_TEST == "rule-lifecycle"'
-    - if: '$RUN_TEST == "all-coder"'
-    - if: '$RUN_TEST == "all"'
   timeout: 10m
 
 test-workspace-indexing:
@@ -272,8 +251,6 @@ test-workspace-indexing:
     deployment_tier: testing
   rules:
     - if: '$RUN_TEST == "workspace-indexing"'
-    - if: '$RUN_TEST == "all-coder"'
-    - if: '$RUN_TEST == "all"'
   timeout: 15m
 
 # ════════════════════════════════════════════
@@ -291,8 +268,6 @@ test-cross-session-recall:
     deployment_tier: testing
   rules:
     - if: '$RUN_TEST == "cross-session-recall"'
-    - if: '$RUN_TEST == "all-integration"'
-    - if: '$RUN_TEST == "all"'
   timeout: 15m
 
 test-eva-code-trace:
@@ -306,8 +281,6 @@ test-eva-code-trace:
     deployment_tier: testing
   rules:
     - if: '$RUN_TEST == "eva-code-trace"'
-    - if: '$RUN_TEST == "all-integration"'
-    - if: '$RUN_TEST == "all"'
   timeout: 15m
 
 test-infra-inspection:
@@ -321,8 +294,6 @@ test-infra-inspection:
     deployment_tier: testing
   rules:
     - if: '$RUN_TEST == "infra-inspection"'
-    - if: '$RUN_TEST == "all-integration"'
-    - if: '$RUN_TEST == "all"'
   timeout: 20m
 
 test-knowledge-pipeline:
@@ -336,8 +307,6 @@ test-knowledge-pipeline:
     deployment_tier: testing
   rules:
     - if: '$RUN_TEST == "knowledge-pipeline"'
-    - if: '$RUN_TEST == "all-integration"'
-    - if: '$RUN_TEST == "all"'
   timeout: 15m
 
 test-routing-edge-cases:
@@ -351,8 +320,6 @@ test-routing-edge-cases:
     deployment_tier: testing
   rules:
     - if: '$RUN_TEST == "routing-edge-cases"'
-    - if: '$RUN_TEST == "all-integration"'
-    - if: '$RUN_TEST == "all"'
   timeout: 30m
 
 test-security-edge-cases:
@@ -366,8 +333,6 @@ test-security-edge-cases:
     deployment_tier: testing
   rules:
     - if: '$RUN_TEST == "security-edge-cases"'
-    - if: '$RUN_TEST == "all-integration"'
-    - if: '$RUN_TEST == "all"'
   timeout: 10m
 
 test-tool-isolation:
@@ -381,8 +346,6 @@ test-tool-isolation:
     deployment_tier: testing
   rules:
     - if: '$RUN_TEST == "tool-isolation"'
-    - if: '$RUN_TEST == "all-integration"'
-    - if: '$RUN_TEST == "all"'
   timeout: 15m
 
 # ════════════════════════════════════════════

@@ -475,22 +475,14 @@ async function clearTest(name) {
   const log = [];
   showStatus(`Clearing ${name}...`);
 
-  // 1. GitLab: delete pipelines that ONLY ran this test (not shared group runs)
+  // 1. GitLab: delete all pipelines for this test (each pipeline = 1 test)
   try {
     const runs = testStatus[name] || [];
     const pipelineIds = [...new Set(runs.map(r => r.pipeline_id))];
-    let deleted = 0, skipped = 0;
     for (const pid of pipelineIds) {
-      const jobs = await gitlabGet(`/projects/${PROJECT_ID}/pipelines/${pid}/jobs`);
-      const testJobs = jobs.filter(j => j.name.startsWith('test-'));
-      if (testJobs.length <= 1) {
-        await gitlabDelete(`/projects/${PROJECT_ID}/pipelines/${pid}`);
-        deleted++;
-      } else {
-        skipped++;
-      }
+      await gitlabDelete(`/projects/${PROJECT_ID}/pipelines/${pid}`);
     }
-    log.push(`GitLab: ${deleted} deleted, ${skipped} shared (kept)`);
+    log.push(`GitLab: ${pipelineIds.length} pipelines deleted`);
   } catch(e) { log.push(`GitLab: ${e.message}`); }
 
   // 2. Phoenix: delete the test project
@@ -653,8 +645,40 @@ async function runTest(name) {
   }
 }
 
-function runGroup(group) {
-  runTest(group);
+async function runGroup(group) {
+  // Map group names to category filters
+  const groupMap = {
+    'all': null,  // all tests
+    'all-user': 'user',
+    'all-websearch': 'websearch',
+    'all-coder': 'coder',
+    'all-integration': 'integration',
+  };
+  const cat = groupMap[group];
+  const tests = cat === null ? TESTS : TESTS.filter(t => t.cat === cat);
+  const label = cat || 'all';
+
+  showStatus(`Starting ${tests.length} individual pipelines (${label})...`);
+  let started = 0, failed = 0;
+  for (const t of tests) {
+    try {
+      const r = await fetch(`${GITLAB_API}/projects/${PROJECT_ID}/pipeline`, {
+        method: 'POST',
+        headers: {'PRIVATE-TOKEN': TOKEN, 'Content-Type': 'application/json'},
+        body: JSON.stringify({ref: 'main', variables: [{key: 'RUN_TEST', value: t.name}]})
+      });
+      const pipeline = await r.json();
+      if (pipeline.id) {
+        started++;
+        showStatus(`Starting pipelines (${label}): ${started}/${tests.length}...`);
+      } else {
+        failed++;
+      }
+    } catch(e) { failed++; }
+  }
+  const msg = `Started ${started} pipelines` + (failed ? `, ${failed} failed` : '');
+  showStatus(msg, failed ? 'error' : 'success');
+  setTimeout(async () => { await refreshAll(); }, 3000);
 }
 
 // ── Refresh ──
