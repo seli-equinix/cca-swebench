@@ -400,35 +400,59 @@ async function clearAll() {
     let ct = 0;
     for (const [name, data] of Object.entries(phoenixData)) {
       if (name.startsWith('test/') || name.startsWith('test-')) {
-        await phoenixQuery(`mutation { deleteProject(id: "${data.id}") }`);
+        await phoenixQuery(`mutation { deleteProject(id: "${data.id}") { __typename } }`);
         ct++;
       }
     }
     log.push(`Phoenix: ${ct} test projects deleted`);
   } catch(e) { log.push(`Phoenix: ${e.message}`); }
 
-  // 3. Qdrant: delete test user profiles
+  // 3. Qdrant: delete test user profiles (case-insensitive prefix match)
   try {
     const points = await qdrantScroll('user_profiles');
+    const realUsers = new Set(['sean', 'seli']);
     const testIds = points
-      .filter(p => TEST_USER_PREFIXES.some(pfx => (p.payload?.display_name || '').startsWith(pfx)))
+      .filter(p => {
+        const dn = (p.payload?.display_name || '').toLowerCase();
+        if (realUsers.has(dn)) return false;
+        return TEST_USER_PREFIXES.some(pfx => dn.startsWith(pfx.toLowerCase()));
+      })
       .map(p => p.id);
     await qdrantDelete('user_profiles', testIds);
     log.push(`Qdrant profiles: ${testIds.length} deleted, ${points.length - testIds.length} kept`);
   } catch(e) { log.push(`Qdrant profiles: ${e.message}`); }
 
-  // 4. Qdrant: delete test notes (keep real user notes)
+  // 4. Qdrant: delete test notes (keep only known real user notes)
   try {
     const realUsers = new Set(['sean', 'seli']);
     const points = await qdrantScroll('cca_notes');
     const testIds = points
-      .filter(p => !realUsers.has(p.payload?.user_id))
+      .filter(p => {
+        const uid = (p.payload?.user_id || '').toLowerCase();
+        return !realUsers.has(uid);
+      })
       .map(p => p.id);
     await qdrantDelete('cca_notes', testIds);
     log.push(`Qdrant notes: ${testIds.length} deleted, ${points.length - testIds.length} kept`);
   } catch(e) { log.push(`Qdrant notes: ${e.message}`); }
 
-  // 5. Workspace: delete test files
+  // 5. Redis: delete test sessions via CCA server
+  try {
+    const sessResp = await fetch(`${CCA_API}/sessions`);
+    const sessData = await sessResp.json();
+    const sessions = sessData.sessions || [];
+    const testSessions = sessions.filter(s => (s.session_id || s).toString().startsWith('test-'));
+    if (testSessions.length > 0) {
+      const ids = testSessions.map(s => s.session_id || s);
+      await fetch(`${CCA_API}/sessions`, {
+        method: 'DELETE', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({session_ids: ids})
+      });
+    }
+    log.push(`Redis: ${testSessions.length} test sessions deleted`);
+  } catch(e) { log.push(`Redis: ${e.message}`); }
+
+  // 6. Workspace: delete test files
   try {
     const r = await fetch(`${CCA_API}/workspace/files?prefix=`, {method:'DELETE'});
     const data = await r.json();
@@ -464,7 +488,7 @@ async function clearTest(name) {
   try {
     const ph = phoenixData[`test/${name}`];
     if (ph && ph.id) {
-      await phoenixQuery(`mutation { deleteProject(id: "${ph.id}") }`);
+      await phoenixQuery(`mutation { deleteProject(id: "${ph.id}") { __typename } }`);
       log.push('Phoenix: project deleted');
     } else {
       log.push('Phoenix: no project');
