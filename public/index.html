@@ -396,7 +396,7 @@ function renderTests() {
     else if (s.status === 'failed') failing++;
 
     const phId = ph.id || '';
-    const phUrl = phId ? `${PHOENIX_UI}/projects/${encodeURIComponent(phId)}` : `${PHOENIX_UI}`;
+    const phUrl = phId ? `${PHOENIX_UI}/projects/${phId}/traces` : `${PHOENIX_UI}`;
     const phoenixLink = `<a href="${phUrl}" target="_blank">${traces}</a>`;
 
     const isFailed = s && s.status === 'failed';
