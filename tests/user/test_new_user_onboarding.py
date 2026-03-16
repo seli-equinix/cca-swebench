@@ -105,9 +105,9 @@ class TestNewUserOnboarding:
             assert len(r3.content) > 50, "Response too short for a code task"
 
             # ── Notes check: NoteObserver should have extracted the preference ──
-            # NoteObserver is async fire-and-forget — give it time to process
-            time.sleep(10)
-            notes = cca.search_notes("type hints concise code", user_id=user_id)
+            # NoteObserver is async fire-and-forget — poll until notes arrive
+            from tests.helpers.polling import wait_for_notes
+            notes = wait_for_notes(cca, "type hints concise code", user_id=user_id)
             trace_test.set_attribute("cca.test.notes_count", len(notes))
             trace_test.set_attribute(
                 "cca.test.notes_preview",

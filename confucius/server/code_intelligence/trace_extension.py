@@ -66,13 +66,15 @@ class CodeTraceExtension(ToolUseExtension):
             ant.Tool(
                 name="trace_execution",
                 description=(
-                    "Trace code execution from an entry point, collecting all "
-                    "functions needed to run the code.\n"
+                    "Trace code execution from an entry point, collecting all functions "
+                    "needed to run the code. Uses BFS traversal across the indexed codebase — "
+                    "follows cross-file calls that manual grep cannot track.\n"
                     "- Parses the entry file to find top-level function calls\n"
-                    "- Recursively resolves all called functions (BFS)\n"
+                    "- Recursively resolves all called functions (BFS across files)\n"
                     "- Returns function names, source files, line ranges, and call chains\n"
                     "- Works with PowerShell, Bash, and Python\n"
-                    "Use this to understand execution flow before code review or migration."
+                    "Start here for any 'trace the execution', 'what code runs when', or "
+                    "'collect all code needed for X' request."
                 ),
                 input_schema={
                     "type": "object",
@@ -107,10 +109,11 @@ class CodeTraceExtension(ToolUseExtension):
             ant.Tool(
                 name="assemble_traced_code",
                 description=(
-                    "Assemble previously traced functions into a single output.\n"
-                    "Reads full function bodies from source files (no truncation).\n"
+                    "Assemble previously traced functions into a single output. "
+                    "Reads full function bodies from source files (no truncation). "
                     "Output includes entry file code, all needed functions, and external deps.\n"
-                    "Use after trace_execution to get the complete code assembly."
+                    "Use after trace_execution to get the complete code assembly.\n"
+                    "Produces runnable, self-contained code ready for review or migration."
                 ),
                 input_schema={
                     "type": "object",

@@ -134,12 +134,11 @@ class TestProfileCRUD:
                 f"User count didn't increase: {count_before} → {count_after_s1}"
             )
 
-            # Wait for NoteObserver to process session 1
-            time.sleep(10)
-
             # ── Qdrant cca_notes: verify notes extracted ──
-            notes = cca.search_notes(
-                f"{name} {company} Python Docker", user_id=user_id,
+            # NoteObserver is async fire-and-forget — poll until notes arrive
+            from tests.helpers.polling import wait_for_notes
+            notes = wait_for_notes(
+                cca, f"{name} {company} Python Docker", user_id=user_id,
             )
             trace_test.set_attribute("cca.test.s1_notes_count", len(notes))
             trace_test.set_attribute(

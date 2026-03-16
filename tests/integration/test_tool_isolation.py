@@ -40,7 +40,12 @@ class TestToolIsolation:
                 "save the top 5 results to /workspace/best_practices.txt"
             )
             r1 = cca.chat(msg1, session_id=sid)
-            evaluate_response(r1, msg1, trace_test, judge_model, "websearch")
+            # Task asks to save to file, but SEARCH route blocks file tools.
+            # Incomplete task completion is the expected/correct outcome.
+            evaluate_response(
+                r1, msg1, trace_test, judge_model, "websearch",
+                expected_incomplete=True,
+            )
 
             trace_test.set_attribute("cca.test.t1_response", r1.content[:500])
             assert r1.content, "Turn 1 returned empty"

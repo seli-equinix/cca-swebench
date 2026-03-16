@@ -157,14 +157,14 @@ class TestKnowledgePipeline:
             assert r1.content, "Turn 1 returned empty"
             assert r1.user_identified, f"{user_name} should be identified"
 
-            # Wait for NoteObserver to fire (async, fire-and-forget)
-            time.sleep(12)
-
             # ── Verify: Search notes via REST API ──
+            # NoteObserver is async fire-and-forget — poll until notes arrive
+            from tests.helpers.polling import wait_for_notes
+
             user_data = cca.find_user_by_name(user_name)
             user_id = user_data["user_id"] if user_data else None
 
-            notes = cca.search_notes(project_name, user_id=user_id)
+            notes = wait_for_notes(cca, project_name, user_id=user_id)
             trace_test.set_attribute("cca.test.note_count", len(notes))
 
             if notes:
@@ -190,26 +190,8 @@ class TestKnowledgePipeline:
                     f"Notes: {all_notes_text[:300]}"
                 )
             else:
-                # NoteObserver may not have fired yet — advisory warning
-                trace_test.set_attribute("cca.test.notes_missing", True)
-                # Don't hard-fail: NoteObserver is async and may be slow
-                # Instead, do a second turn to give it more time
-                msg2 = (
-                    f"Can you tell me what you know about my "
-                    f"{project_name} project?"
-                )
-                r2 = cca.chat(msg2, session_id=sid)
-                evaluate_response(r2, msg2, trace_test, judge_model, "user")
-
-                # Wait again
-                time.sleep(10)
-                notes = cca.search_notes(project_name, user_id=user_id)
-                trace_test.set_attribute(
-                    "cca.test.note_count_retry", len(notes),
-                )
-                assert len(notes) >= 1, (
-                    f"NoteObserver didn't extract any notes after 2 turns "
-                    f"and {22}s wait"
+                assert False, (
+                    "NoteObserver didn't extract any notes after 45s polling"
                 )
 
         finally:

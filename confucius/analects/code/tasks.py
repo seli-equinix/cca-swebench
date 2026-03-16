@@ -48,14 +48,29 @@ Validation
 - If dependencies are missing, install them first with pip/npm.
 - Always show the actual output — don't skip the verification step.
 
-Code Intelligence
-- **ALWAYS use `search_codebase` to find code, files, or patterns** — do NOT use bash grep/find/rg for code discovery. `search_codebase` has the full indexed repository with semantic search and returns richer results than grep. Use it for every "find code that does X", "which files use Y", "where is Z implemented" question.
-- Use `query_call_graph` to trace callers/callees, find who calls a function, or map dependencies.
-- Use `find_orphan_functions` to detect unused or dead code.
+Code Analysis Tools
+Your workspace has a pre-indexed code knowledge graph built from AST parsing.
+For code understanding tasks, these tools return structured, cross-file
+results that shell commands cannot replicate:
+
+| Task | Tool | What It Returns |
+|------|------|-----------------|
+| Find code / implementations | `search_codebase(query)` | Semantic search with graph context (callers/callees) |
+| Who calls function X? | `query_call_graph(function_name, "callers")` | All callers with file paths — includes indirect and cross-file |
+| What does X call? | `query_call_graph(function_name, "callees")` | All callees — follows imports across files |
+| Trace execution from file | `trace_execution(entry_file)` | BFS traversal collecting all needed functions across all files |
+| Assemble code for review | `assemble_traced_code(trace_id)` | Complete runnable code with all dependencies resolved |
+| File dependency analysis | `analyze_dependencies(file_path)` | All functions in file + their cross-file callers |
+| Find unused code | `find_orphan_functions(project)` | Functions with zero callers in the graph |
+
+Use `bash` for EXECUTING code (run tests, start servers, install packages),
+not for code search or analysis. After getting graph/trace results, you may
+use bash to supplement (e.g., verify runtime behavior, run the code).
+
+Other Knowledge Tools
 - Use `search_documents` to search uploaded documents for relevant context.
 - Use `search_notes` to check past session knowledge before starting work.
 - Use `create_rule` to define persistent behavior rules that survive across sessions.
-- `bash` is for RUNNING code, tests, and commands — NOT for searching/finding code. If you need to locate code, use `search_codebase`.
 
 Document Storage vs Planning Memory
 - When the user gives you text, notes, docs, or content to STORE for later retrieval, use `upload_document`. It chunks, embeds, and makes content searchable. Use `list_session_docs` to list stored documents, and `promote_doc_to_knowledge` to make them permanent.

@@ -51,12 +51,14 @@ class GraphToolsExtension(ToolUseExtension):
             ant.Tool(
                 name="query_call_graph",
                 description=(
-                    "Query the code knowledge graph for function call relationships.\n"
-                    "- callers: find functions that call the given function\n"
-                    "- callees: find functions called by the given function\n"
+                    "Query the code knowledge graph for function call relationships. "
+                    "Uses a pre-indexed AST-parsed call graph with complete cross-file "
+                    "relationships — more accurate than grep for tracing calls.\n"
+                    "- callers: find ALL functions that call the given function "
+                    "(including indirect, cross-file callers grep would miss)\n"
+                    "- callees: find ALL functions called by the given function\n"
                     "- call_chain: traverse the call graph transitively (up to depth)\n"
-                    "Use this to understand how code flows, find entry points, "
-                    "or trace execution paths."
+                    "Start here for any 'who calls X' or 'what does X call' question."
                 ),
                 input_schema={
                     "type": "object",
@@ -93,10 +95,12 @@ class GraphToolsExtension(ToolUseExtension):
             ant.Tool(
                 name="find_orphan_functions",
                 description=(
-                    "Find functions with no inbound callers in the code graph.\n"
-                    "These may be dead code, entry points, or event handlers.\n"
+                    "Find functions with no inbound callers in the code knowledge graph. "
+                    "The graph tracks ALL call relationships from AST parsing, so this "
+                    "finds truly unused functions that grep-based searches would miss.\n"
+                    "Results may be dead code, entry points, or event handlers.\n"
                     "Excludes: main, __init__, __main__, _-prefixed functions.\n"
-                    "Use this to find potentially unused code in a project."
+                    "Start here for any 'find unused code' or 'find dead functions' request."
                 ),
                 input_schema={
                     "type": "object",
@@ -120,11 +124,12 @@ class GraphToolsExtension(ToolUseExtension):
             ant.Tool(
                 name="analyze_dependencies",
                 description=(
-                    "Analyze code dependencies at the file or function level.\n"
-                    "- File-level: lists all functions in a file + their cross-file callers\n"
+                    "Analyze code dependencies at the file or function level using the "
+                    "pre-indexed knowledge graph.\n"
+                    "- File-level: lists all functions in a file + their cross-file callers "
+                    "(shows coupling and change impact across the codebase)\n"
                     "- Function-level: shows callers, callees, and file breakdown\n"
-                    "Use this to understand coupling, impact of changes, or to "
-                    "plan refactoring."
+                    "Start here for any 'what are the dependencies' or 'impact of changes' question."
                 ),
                 input_schema={
                     "type": "object",

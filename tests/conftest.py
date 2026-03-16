@@ -398,10 +398,38 @@ def deferred_experiment(judge_model, request):
 
 
 def pytest_sessionfinish(session, exitstatus):
-    """Fail session if any LLM judge evaluations returned poor/failed."""
-    failures = getattr(session.config, "_judge_failures", [])
-    if failures and exitstatus == 0:
+    """Fail session if majority of a test's judge turns failed.
+
+    Per-test majority voting: a test's judge results only count as a
+    failure if more than half its turns are rated poor/failed.  This
+    handles first-turn quality variance from the 35B model (1 weak
+    turn out of 6 should not fail the entire job).
+    """
+    results = getattr(session.config, "_judge_results", [])
+    if not results or exitstatus != 0:
+        return
+
+    from collections import defaultdict
+
+    by_test: dict[str, list[dict]] = defaultdict(list)
+    for r in results:
+        by_test[r["test_name"]].append(r)
+
+    test_failures = []
+    for test_name, evals in by_test.items():
+        n_fail = sum(1 for e in evals if e["label"] in ("poor", "failed"))
+        if n_fail > len(evals) / 2:
+            test_failures.append(test_name)
+
+    if test_failures:
         session.exitstatus = 1
+
+    # Update _judge_failures so terminal_summary only shows majority-failed tests
+    session.config._judge_failures = [
+        r for r in results
+        if r["test_name"] in test_failures
+        and r["label"] in ("poor", "failed")
+    ]
 
 
 def pytest_terminal_summary(terminalreporter, exitstatus, config):

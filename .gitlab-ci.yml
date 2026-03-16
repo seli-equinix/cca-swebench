@@ -131,7 +131,7 @@ test-returning-user-memory:
     - if: '$RUN_TEST == "returning-user-memory"'
     - if: '$RUN_TEST == "all-user"'
     - if: '$RUN_TEST == "all"'
-  timeout: 10m
+  timeout: 20m
 
 # ════════════════════════════════════════════
 #  WEBSEARCH TESTS

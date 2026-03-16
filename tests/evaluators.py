@@ -624,6 +624,7 @@ def evaluate_response(
     judge_model=None,
     category: str = "user",
     expect_refusal: bool = False,
+    expected_incomplete: bool = False,
 ) -> Dict[str, Dict[str, Any]]:
     """Run all applicable evaluators and post results as Phoenix annotations.
 
@@ -741,6 +742,7 @@ def evaluate_response(
         "user_identified": result.user_identified,
         "tool_iterations": result.metadata.get("tool_iterations", 0),
         "route": result.metadata.get("route", ""),
+        "expected_incomplete": expected_incomplete,
     })
 
     # --- Gate on code evaluator failures ---
@@ -925,7 +927,12 @@ def run_deferred_experiment(run_judge: bool = False) -> list[dict]:
                     "route": item.get("route", ""),
                 },
             })()
-            for llm_eval in [eval_response_quality, eval_task_completion]:
+            # Skip task_completion for items where incomplete is expected
+            # (e.g., tool isolation tests validating that tools are blocked)
+            llm_evals = [eval_response_quality]
+            if not item.get("expected_incomplete"):
+                llm_evals.append(eval_task_completion)
+            for llm_eval in llm_evals:
                 ev = llm_eval(
                     mock_result,
                     item["message"],
@@ -1028,7 +1035,11 @@ def _run_judge_only() -> list[dict]:
                 "route": item.get("route", ""),
             },
         })()
-        for llm_eval in [eval_response_quality, eval_task_completion]:
+        llm_evals = [eval_response_quality]
+        if not item.get("expected_incomplete"):
+            llm_evals.append(eval_task_completion)
+        n_evals = len(llm_evals)
+        for llm_eval in llm_evals:
             ev = llm_eval(
                 mock_result,
                 item["message"],
@@ -1041,7 +1052,7 @@ def _run_judge_only() -> list[dict]:
             results.append(ev)
 
         if item.get("span_id"):
-            for ev in results[-2:]:
+            for ev in results[-n_evals:]:
                 _post_annotation(
                     span_id=ev["span_id"],
                     name=ev["name"],
@@ -1052,7 +1063,7 @@ def _run_judge_only() -> list[dict]:
                 )
 
         has_fail = any(
-            ev["label"] in ("poor", "failed") for ev in results[-2:]
+            ev["label"] in ("poor", "failed") for ev in results[-n_evals:]
         )
         print(f" {'FAIL' if has_fail else 'ok'}", flush=True)
 
