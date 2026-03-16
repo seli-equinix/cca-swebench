@@ -630,17 +630,17 @@ function renderTests() {
 // ── Actions ──
 
 async function runTest(name) {
-  const formData = new FormData();
-  formData.append('ref', 'main');
-  formData.append('variables[RUN_TEST]', name);
-
   const r = await fetch(`${GITLAB_API}/projects/${PROJECT_ID}/pipeline`, {
-    method: 'POST', headers: {'PRIVATE-TOKEN': TOKEN}, body: formData
+    method: 'POST',
+    headers: {'PRIVATE-TOKEN': TOKEN, 'Content-Type': 'application/json'},
+    body: JSON.stringify({ref: 'main', variables: [{key: 'RUN_TEST', value: name}]})
   });
   const pipeline = await r.json();
   if (pipeline.id) {
     showStatus(`Pipeline #${pipeline.id} started for ${name}`);
     setTimeout(async () => { await refreshAll(); }, 3000);
+  } else {
+    showStatus(`Failed to start pipeline: ${pipeline.message || pipeline.error || 'unknown error'}`, 'error');
   }
 }
 
