@@ -155,8 +155,10 @@ RUN pip install --no-cache-dir .
 
 # Create non-root user
 RUN useradd --create-home --shell /bin/bash --uid 1000 cca && \
-    mkdir -p /workspace /home/cca/.confucius && \
-    chown -R cca:cca /app /workspace /home/cca/.confucius
+    mkdir -p /workspace /home/cca/.confucius /home/cca/.chub && \
+    printf 'sources:\n  - name: default\n    url: https://cdn.aichub.org/v1\n  - name: local\n    path: /app/context-hub/dist\n' \
+      > /home/cca/.chub/config.yaml && \
+    chown -R cca:cca /app /workspace /home/cca/.confucius /home/cca/.chub
 
 USER cca
 
